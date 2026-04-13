@@ -5,16 +5,19 @@ import json
 import os
 import time
 import threading
+import sqlite3
+
+conn = sqlite3.connect("casino.db", check_same_thread=False)
+cursor = conn.cursor()
 
 # ====================== НАСТРОЙКИ ======================
 import os
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = 1316137517  # <-- ВСТАВЬ СВОЙ ID
 
-FILE_PATH = "data.json"
 
 MIN_BET = 10
-MAX_BETS_PER_PLAYER = 30
+MAX_BETS_PER_PLAYER = 20
 GO_DELAY = 10
 
 BONUS_MIN = 100
@@ -23,26 +26,51 @@ BONUS_MAX = 1000
 bot = telebot.TeleBot(TOKEN)
 
 # ====================== ДАННЫЕ ======================
-data = {}
-current_bets = {}
-roulette_history = {}
-user_games = {}
-bet_timers = {}
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    name TEXT,
+    coins INTEGER,
+    wins INTEGER,
+    last_bonus REAL
+)
+""")
+conn.commit()
 
-lock = threading.Lock()
+# ====================== ФУНКЦИИ ДАННЫЕ ======================
+def get_user(uid, name):
+    cursor.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    user = cursor.fetchone()
+
+    if not user:
+        cursor.execute(
+            "INSERT INTO users VALUES (?, ?, ?, ?, ?)",
+            (uid, name, 50, 0, 0)
+        )
+        conn.commit()
+        return {"coins": 50, "wins": 0, "last_bonus": 0}
+
+    return {
+        "coins": user[2],
+        "wins": user[3],
+        "last_bonus": user[4]
+    }
+
+
+def update_user(uid, coins=None, wins=None, last_bonus=None):
+    if coins is not None:
+        cursor.execute("UPDATE users SET coins=? WHERE user_id=?", (coins, uid))
+    if wins is not None:
+        cursor.execute("UPDATE users SET wins=? WHERE user_id=?", (wins, uid))
+    if last_bonus is not None:
+        cursor.execute("UPDATE users SET last_bonus=? WHERE user_id=?", (last_bonus, uid))
+    conn.commit()
 
 # ====================== ФАЙЛ ======================
-def load_data():
-    global data
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-def save_data():
-    with open(FILE_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-load_data()
+current_bets = {}
+user_games = {}
+bet_timers = {}
+roulette_history = {}
 
 # ====================== ВСПОМОГАТЕЛЬНОЕ ======================
 def get_name(u):
@@ -85,8 +113,10 @@ def handle(m):
     lower = text.lower()
     is_private = m.chat.type == "private"
 
-    if uid not in data:
-        data[uid] = {"coins": 0, "wins": 0, "name": get_name(m.from_user), "bonus": 0}
+
+    name = get_name(m.from_user)
+    user = get_user(uid, name)
+
 
     # ====================== ПЕРЕВОД ДЕНЕГ ======================
     if lower.startswith("п"):
@@ -113,25 +143,18 @@ def handle(m):
             send(chat, "❌ Нельзя себе")
             return
 
-        if data[sender]["coins"] < amount:
+        sender_user = user
+        receiver_user = get_user(receiver, get_name(m.reply_to_message.from_user))
+
+        if sender_user["coins"] < amount:
             send(chat, "❌ Недостаточно средств")
             return
 
-        # перевод
-        data[sender]["coins"] -= amount
+        sender_user["coins"] -= amount
+        receiver_user["coins"] += amount
 
-        if receiver not in data:
-            data[receiver] = {
-                "coins": 0,
-                "wins": 0,
-                "name": m.reply_to_message.from_user.first_name,
-                "bonus": 0
-            }
-
-        data[receiver]["coins"] += amount
-
-        if random.randint(1, 3) == 1:
-            save_data()
+        update_user(sender, coins=sender_user["coins"])
+        update_user(receiver, coins=receiver_user["coins"])
 
         send(chat, f"💸 Переведено {amount} Угадайек")
         return
@@ -146,8 +169,10 @@ def handle(m):
         num = int(text)
 
         if num == g["num"]:
-            data[uid]["coins"] += 10
-            data[uid]["wins"] += 1
+            user["coins"] += 10
+            user["wins"] += 1
+
+            update_user(uid, coins=user["coins"], wins=user["wins"])
             send(chat, "🎉 Угадал! +10")
             del user_games[uid]
         else:
@@ -157,8 +182,7 @@ def handle(m):
                 del user_games[uid]
             else:
                 send(chat, "🔼 Больше" if num < g["num"] else "🔽 Меньше")
-        if random.randint(1, 3) == 1:
-            save_data()
+
         return
 
     if text == "🎮 Играть":
@@ -169,16 +193,17 @@ def handle(m):
     # ====================== БОНУС ======================
     if text == "🎁 Бонус":
         now = time.time()
-        if now - data[uid]["bonus"] >= 86400:
+        if now - user["last_bonus"] >= 86400:
             reward = random.randint(BONUS_MIN, BONUS_MAX)
-            data[uid]["coins"] += reward
-            data[uid]["bonus"] = now
+            user["coins"] += reward
+            user["last_bonus"] = now
+
+            update_user(uid, coins=user["coins"], last_bonus=user["last_bonus"])
+
             send(chat, f"🎁 Ты получил {reward} Угадайек!")
-            save_data()
         else:
             send(chat, "⏳ Раз в 24 часа")
         return
-
     # ====================== АДМИН ======================
     if m.from_user.id == ADMIN_ID:
         if text.startswith("+") or text.startswith("-"):
@@ -191,9 +216,10 @@ def handle(m):
                 else:
                     return
 
-                data[target]["coins"] += amount
+                target_user = get_user(target, "Игрок")
+                target_user["coins"] += amount
+                update_user(target, coins=target_user["coins"])
                 send(chat, "✅ Готово")
-                save_data()
             except:
                 send(chat, "❌ Ошибка")
             return
@@ -205,7 +231,7 @@ def handle(m):
             first = parts[0]
 
             if first == "все":
-                amount = data[uid]["coins"]
+                amount = user["coins"]
             else:
                 if not first.isdigit():
                     send(chat, "❌ Неверная сумма")
@@ -217,7 +243,7 @@ def handle(m):
                     send(chat, "❌ Укажи ставки")
                     return
 
-                amount = data[uid]["coins"] // len(bets_input)
+                amount = user["coins"] // len(bets_input)
 
             if amount < MIN_BET:
                 send(chat, f"❌ Минимум {MIN_BET}")
@@ -229,12 +255,12 @@ def handle(m):
 
             if first == "все":
                 # делим баланс на количество ставок
-                amount = data[uid]["coins"] // len(bets_input)
+                amount = user["coins"] // len(bets_input)
 
             total_cost = amount * len(bets_input)
 
-            if data[uid]["coins"] < total_cost:
-                send(chat, f"❌ Нужно {total_cost}, у тебя {data[uid]['coins']}")
+            if user["coins"] < total_cost:
+                send(chat, f"❌ Нужно {total_cost}, у тебя {user['coins']}")
                 return
 
             added = 0
@@ -318,7 +344,8 @@ def handle(m):
 
             # списание денег
             total_spent = amount * added
-            data[uid]["coins"] -= total_spent
+            user["coins"] -= total_spent
+            update_user(uid, coins=user["coins"])
 
             if chat not in bet_timers:
                 bet_timers[chat] = time.time()
@@ -327,8 +354,6 @@ def handle(m):
             text_out += "\n".join(bet_list_text)
 
             send(chat, text_out)
-            if random.randint(1, 3) == 1:
-                save_data()
 
         except:
             send(chat, "❌ Ошибка ставки")
@@ -371,10 +396,10 @@ def handle(m):
             send(chat, "❌ Нет ставок")
             return
         refund = sum(b[0] for b in bets)
-        data[uid]["coins"] += refund
+        user["coins"] += refund
+        update_user(uid, coins=user["coins"])
         current_bets[chat][uid] = []
         send(chat, f"💰 Возврат {refund}")
-        save_data()
 
     # ====================== РУЛЕТКА ======================
     if text == "🎰 Рулетка":
@@ -402,8 +427,9 @@ def handle(m):
         full_report = result + "\n\n"
 
         for uid, bts in bets.items():
+            u = get_user(uid, "Игрок")
             win = 0
-            user_text = f"👤 {data[uid]['name']}:\n"
+            user_text = f"👤 {uid}:\n"
 
             for amount, t, mult in bts:
                 ok = False
@@ -435,7 +461,8 @@ def handle(m):
                 else:
                     user_text += f"❌ {amount} → {name}\n"
 
-            data[uid]["coins"] += win
+            u["coins"] += win
+            update_user(uid, coins=u["coins"])
             user_text += f"💰 Итог: +{win}\n\n"
 
             full_report += user_text
@@ -444,24 +471,28 @@ def handle(m):
         current_bets[chat] = {}
         bet_timers.pop(chat, None)
 
-        save_data()
 
         send(chat, full_report)
         return
 
     # ====================== ПРОФИЛЬ ======================
     if text == "👤 Профиль":
-        u = data[uid]
+        u = user
         send(chat, f"{u['name']}\n💰 {u['coins']}\n🏆 {u['wins']}")
 
     if lower in ["б", "баланс"]:
-        send(chat, f"💰 Баланс: {data[uid]['coins']} Угадайек")
+        send(chat, f"💰 Баланс: {user['coins']} Угадайек")
         return
 
     # ====================== РЕЙТИНГ ======================
     if text == "🏆 Рейтинг":
-        s = sorted(data.items(), key=lambda x: x[1]["coins"], reverse=True)
-        txt = "\n".join([f"{i+1}. {v['name']} — {v['coins']}" for i, (_, v) in enumerate(s[:10])])
+        cursor.execute("SELECT name, coins FROM users ORDER BY coins DESC LIMIT 10")
+        top = cursor.fetchall()
+
+        txt = "🏆 Топ игроков:\n\n"
+        for i, (name, coins) in enumerate(top, 1):
+            txt += f"{i}. {name} — {coins}\n"
+
         send(chat, txt)
 
     # ====================== ИСТОРИЯ ======================
