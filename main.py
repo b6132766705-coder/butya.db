@@ -48,12 +48,13 @@ def get_user(uid, name):
             (uid, name, 50, 0, 0)
         )
         conn.commit()
-        return {"coins": 50, "wins": 0, "last_bonus": 0}
+        return {"coins": 50, "wins": 0, "last_bonus": 0, "name": name}
 
     return {
         "coins": user[2],
         "wins": user[3],
-        "last_bonus": user[4]
+        "last_bonus": user[4],
+        "name": user[1]
     }
 
 
