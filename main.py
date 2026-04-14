@@ -499,13 +499,13 @@ def handle(m):
 
     # ====================== ПРОФИЛЬ ======================
     if text == "👤 Профиль":
-        u = use
-        send(chat, f"{user['name']}\n💰 {format_full(user['coins'])}\n🏆 {user['wins']}")
+        u = user
+        send(chat, f"{u['name']}\n💰 {format_money(u['coins'])}\n🏆 {u['wins']}")
         return
 
     # ====================== БАЛАНС ======================
     if lower in ["б", "баланс"]:
-        send(chat, f"💰 Баланс: {format_full(user['coins'])} Угадайек")
+        send(chat, f"💰 Баланс: {format_money(user['coins'])} Угадайек")
         return
     # ====================== РЕЙТИНГ ======================
     if text == "🏆 Рейтинг":
