@@ -164,13 +164,17 @@ async def place_smart_bet(message: types.Message):
     if chat_id not in active_bets: active_bets[chat_id] = {}
     active_bets[chat_id].setdefault(message.from_user.id, []).extend(user_bets)
     
+    # Исправленный блок формирования отчета
     report = f"✅ {message.from_user.first_name}, ставки приняты!\n💸 Потрачено: {total_cost}\n\n📊 Твои ставки:\n"
-    for b in user_bets: report += f"• {b['amount']} ➔ {b['target']}\n
-       # Замени последнюю строчку в place_smart_bet на эту:
+    for b in user_bets: 
+        report += f"• {b['amount']} ➔ {b['target']}\n" # Кавычка в конце теперь закрыта
+
+    # Отправляем сообщение с обновленной клавиатурой
     await message.answer(
         report, 
         reply_markup=get_main_keyboard(message.from_user.id, message.chat.id)
     )
+
 
 
 
