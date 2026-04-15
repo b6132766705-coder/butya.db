@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT,
     coins INTEGER,
     wins INTEGER,
-    last_bonus DOUBLE PRECISION
+    last_bonus DOUBLE PRECISION,
+    level INTEGER DEFAULT 1
 )
 """)
 conn.commit()
@@ -47,17 +48,18 @@ def get_user(uid, name):
 
     if not user:
         cursor.execute(
-            "INSERT INTO users (user_id, name, coins, wins, last_bonus) VALUES (%s, %s, %s, %s, %s)",
-            (uid, name, 50, 0, 0)
+            "INSERT INTO users (user_id, name, coins, wins, last_bonus, level) VALUES (%s, %s, %s, %s, %s, %s)",
+            (uid, name, 50, 0, 0, 1)
         )
         conn.commit()
-        return {"coins": 50, "wins": 0, "last_bonus": 0, "name": name}
+        return {"coins": 50, "wins": 0, "last_bonus": 0, "name": name, "level": 1}
 
     return {
         "coins": user[2],
         "wins": user[3],
         "last_bonus": user[4],
-        "name": user[1]
+        "name": user[1],
+        "level": user[5]
     }
 
 def update_user(uid, coins=None, wins=None, last_bonus=None):
@@ -75,6 +77,7 @@ current_bets = {}
 user_games = {}
 bet_timers = {}
 roulette_history = {}
+user_states = {}
 
 # ====================== ВСПОМОГАТЕЛЬНОЕ ======================
 def get_name(u):
@@ -85,6 +88,8 @@ def send(chat_id, text, kb=None):
 
 def format_money(n):
     full = f"{n:,}".replace(",", " ")
+def level_price(level):
+    return 500 * level
 
     if n >= 1_000_000:
         short = f"{round(n / 1_000_000, 1)} млн"
@@ -94,6 +99,7 @@ def format_money(n):
         return full
 
     return f"{full} ({short})"
+
 
 def format_full(n):
     if n >= 1_000_000:
@@ -142,15 +148,63 @@ def handle(m):
     name = get_name(m.from_user)
     user = get_user(uid, name)
 
+    # ====================== КНОПКА ПОВЫШЕНИЯ УРОВНЯ ======================
+if text == "⬆️ Повысить уровень":
+    user_states[uid] = "upgrade_level"
+
+    level = user.get("level", 1)
+    price = level_price(level)
+
+    send(chat, f"⬆️ Повысить уровень?\n💰 Цена: {format_money(price)}\n\nНапиши: да / нет")
+    return
+
     # обновляем имя если изменилось
     if user["name"] != name:
         cursor.execute("UPDATE users SET name=%s WHERE user_id=%s", (name, uid))
         conn.commit()
         user["name"] = name
 
+               # ====================== ОБРАБОТКА СОСТОЯНИЯ ======================
+    if uid in user_states:
+        
+        if user_states[uid] == "upgrade_level":
+            
+            if lower == "да":
+                level = user.get("level", 1)
+                price = level_price(level)
+                
+                if user["coins"] < price:
+                    send(chat, "❌ Недостаточно денег")
+                else:
+                    user["coins"] -= price
+                    level += 1
+
+                    # сохраняем уровень и деньги
+                    cursor.execute(
+                        "UPDATE users SET coins=%s, level=%s WHERE user_id=%s",
+                        (user["coins"], level, uid)
+                    )
+                    conn.commit()
+                    
+                    send(chat, f"🎉 Уровень повышен до {level}!")
+                
+            else:
+                send(chat, "❌ Отменено")
+                
+                del user_states[uid]
+                return
+        
     # ====================== ПРОФИЛЬ ======================
     if text == "👤 Профиль":
-        send(chat, f"{user['name']}\n💰 {format_money(user['coins'])}\n🏆 {user['wins']}")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("⬆️ Повысить уровень")
+
+    send(chat,
+         f"{user['name']}\n"
+         f"💰 {format_money(user['coins'])}\n"
+         f"🏆 Победы: {user['wins']}\n"
+         f"🎖 Уровень: {user['level']}",
+         kb)
         return
 
     # ====================== БАЛАНС ======================
