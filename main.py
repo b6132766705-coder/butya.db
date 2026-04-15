@@ -224,12 +224,12 @@ def handle(m):
 
 
 
-                    # сохраняем уровень и деньги
-                    cursor.execute(
-                        "UPDATE users SET coins=%s, level=%s WHERE user_id=%s",
-                        (user["coins"], level, uid)
-                    )
-                    conn.commit()
+        # сохраняем уровень и деньги
+        cursor.execute(
+            "UPDATE users SET coins=%s, level=%s WHERE user_id=%s",
+            (user["coins"], level, uid)
+        )
+        conn.commit()
                     
         
     # ====================== ПРОФИЛЬ ======================
