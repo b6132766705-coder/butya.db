@@ -28,26 +28,37 @@ def get_main_keyboard():
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- ВСПОМОГАТЕЛЬНЫЕ функции -----------
 def check_win(bet_target, res_num):
-    """Логика проверки выигрыша"""
     res_num = int(res_num)
     is_red = res_num in RED_NUMS
     is_even = res_num % 2 == 0 and res_num != 0
 
+    # Ставки на цвет и четность — всегда х2
     if bet_target == 'к': return (is_red and res_num != 0), 2
     if bet_target == 'ч': return (not is_red and res_num != 0), 2
     if bet_target == 'чт': return is_even, 2
     if bet_target == 'нч': return (not is_even and res_num != 0), 2
     
-    # Проверка диапазона (например 12-15)
+    # СТАВКА НА ДИАПАЗОН (умная математика)
     if '-' in bet_target:
         try:
             start, end = map(int, bet_target.split('-'))
-            return (start <= res_num <= end), 2 # Коэффициент 2 для диапазонов (можно менять)
-        except: return False, 0
+            # Считаем, сколько чисел внутри диапазона
+            count = (end - start) + 1
+            
+            if count <= 0 or count > 37: return False, 0
+            
+            # Вычисляем множитель: 36 делим на количество чисел
+            # Используем float деление, чтобы получить точный коэффициент
+            multiplier = 36 / count
+            
+            # Проверяем, попало ли выпавшее число в диапазон
+            return (start <= res_num <= end), multiplier
+        except: 
+            return False, 0
         
-    # Проверка конкретного числа
+    # Ставка на конкретное число — всегда х36
     if bet_target.isdigit():
         return (int(bet_target) == res_num), 36
         
@@ -159,13 +170,16 @@ async def spin_roulette(message: types.Message):
             final_report += f"👤 {user_name}:\n"
             
             for b in bets:
-                is_win, mult = check_win(b['target'], res_num)
-                if is_win:
-                    win_amount = b['amount'] * mult
-                    user_total_win += win_amount
-                    final_report += f"✅ {b['amount']} → {b['target']} (Выигрыш: {win_amount})\n"
-                else:
-                    final_report += f"❌ {b['amount']} → {b['target']}\n"
+                # Внутри spin_roulette:
+            is_win, mult = check_win(b['target'], res_num)
+            if is_win:
+                # Округляем до целого числа, если множитель дробный
+                prize = int(b['amount'] * mult) 
+                user_total_win += prize
+                final_report += f"✅ {b['amount']} ➔ {b['target']} (Выигрыш: {prize})\n"
+            else:
+                final_report += f"❌ {b['amount']} ➔ {b['target']}\n"
+
             
             user.balance += user_total_win
             if user_total_win > 0: user.wins += 1
