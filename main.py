@@ -90,58 +90,51 @@ async def btn_help(message: types.Message):
     await message.answer(help_text, parse_mode="Markdown")
 
 # --- НОВЫЙ ОБРАБОТЧИК МУЛЬТИ-СТАВОК (ОДНА СУММА - МНОГО ЦЕЛЕЙ) ---
-@dp.message(lambda m: re.match(r'^\d+\s+', m.text)) # Если сообщение начинается с числа
+# --- ОБРАБОТЧИК СТАВОК (ВКЛЮЧАЯ "ВСЕ") ---
+@dp.message(lambda m: re.match(r'^(все|\d+)\s+', m.text.lower()))
 async def place_smart_bet(message: types.Message):
     chat_id = message.chat.id
     parts = message.text.lower().split()
-    
-    if len(parts) < 2:
-        return # Просто число без целей игнорируем
-
-    try:
-        amount = int(parts[0]) # Первая часть - это сумма
-        targets = parts[1:]    # Все остальное - это на что ставим
-    except ValueError:
-        return
-
-    user_bets = []
-    total_cost = 0
+    if len(parts) < 2: return
 
     async with async_session() as session:
         user = await session.get(User, message.from_user.id)
         
-        for target in targets:
-            # Проверяем, подходит ли цель под наши правила (к, ч, чт, нч, число или диапазон)
+        # Определяем сумму ставки
+        if parts[0] == "все":
+            if user.balance <= 0: return await message.reply("❌ У тебя 0 на балансе!")
+            # Делим весь баланс на количество целей
+            amount = user.balance // (len(parts) - 1)
+            if amount < 1: return await message.reply("❌ Слишком мало денег для такого количества ставок!")
+        else:
+            amount = int(parts[0])
+
+        user_bets = []
+        total_cost = 0
+
+        for target in parts[1:]:
             if re.match(r'^(к|ч|чт|нч|\d+-\d+|\d+)$', target):
                 if user.balance >= total_cost + amount:
                     user_bets.append({"amount": amount, "target": target})
                     total_cost += amount
                 else:
-                    await message.reply(f"⚠️ Баланса не хватило на ставку '{target}'. Ставлю на что хватило.")
                     break
 
         if not user_bets:
-            return await message.reply("❌ Недостаточно средств или неверный формат ставок!")
+            return await message.reply("❌ Недостаточно средств или неверный формат!")
 
         user.balance -= total_cost
         await session.commit()
 
-    # Сохраняем в память
+    # Сохраняем ставки
     if chat_id not in active_bets: active_bets[chat_id] = {}
     if message.from_user.id not in active_bets[chat_id]: active_bets[chat_id][message.from_user.id] = []
-    
     active_bets[chat_id][message.from_user.id].extend(user_bets)
 
-    # Красивый отчет о принятых ставках
-    report = (
-        f"✅ **Ставок принято:** {len(user_bets)}\n"
-        f"💸 **Общая сумма:** {total_cost}\n\n"
-        f"📊 **Твои ставки:**\n"
-    )
+    report = f"✅ Ставок: {len(user_bets)}\n💸 Потрачено: {total_cost}\n\n📊 Твои ставки:\n"
     for b in user_bets:
         report += f"• {b['amount']} ➔ {b['target']}\n"
-    
-    await message.answer(report, parse_mode="Markdown")
+    await message.answer(report)
 
 
 # --- ЗАПУСК ПО КОМАНДЕ "ГО" ---
