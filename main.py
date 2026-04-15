@@ -196,15 +196,15 @@ if text == "⬆️ Повысить уровень":
         
     # ====================== ПРОФИЛЬ ======================
     if text == "👤 Профиль":
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("⬆️ Повысить уровень")
-
-    send(chat,
-         f"{user['name']}\n"
-         f"💰 {format_money(user['coins'])}\n"
-         f"🏆 Победы: {user['wins']}\n"
-         f"🎖 Уровень: {user['level']}",
-         kb)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("⬆️ Повысить уровень")
+        
+        send(chat,
+             f"{user['name']}\n"
+             f"💰 {format_money(user['coins'])}\n"
+             f"🏆 Победы: {user['wins']}\n"
+             f"🎖 Уровень: {user['level']}",
+             kb)
         return
 
     # ====================== БАЛАНС ======================
