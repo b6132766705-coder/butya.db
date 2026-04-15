@@ -8,7 +8,9 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from database import init_db, async_session, User
+from database import init_db, async_session, User, RouletteLog
+from aiogram.utils.keyboard import InlineKeyboardBuilder # Нужно для кнопок "Отмена"
+
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
@@ -32,6 +34,12 @@ def get_main_keyboard():
     builder.button(text="📜 Помощь")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+    def get_bet_control_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="📝 Мои ставки", callback_data="my_bets"))
+    builder.row(types.InlineKeyboardButton(text="❌ Отменить всё", callback_data="cancel_bets"))
+    return builder.as_markup()
+
 
 # --- МАТЕМАТИКА РУЛЕТКИ ---
 def check_win(bet_target, res_num):
@@ -171,6 +179,14 @@ async def spin_roulette(message: types.Message):
     res_num = random.randint(0, 36)
     color = "🔴 КРАСНОЕ" if res_num in RED_NUMS else "⚫️ ЧЕРНОЕ" if res_num != 0 else "🟢 ЗЕРО"
     final_report = f"🎰 {color} {res_num}\n\n"
+        # Внутри spin_roulette сразу после генерации res_num
+    async with async_session() as session:
+        new_log = RouletteLog(number=res_num, color=color_emoji)
+        session.add(new_log)
+        await session.commit() # Сначала сохраняем лог
+        
+        # ... дальше идет твой старый цикл обработки выигрышей ...
+
     
     async with async_session() as session:
         for user_id, bets in active_bets[chat_id].items():
@@ -195,6 +211,77 @@ async def spin_roulette(message: types.Message):
 
     active_bets[chat_id] = {}
     await message.answer(final_report)
+
+# --- СЕКЦИЯ УПРАВЛЕНИЯ СТАВКАМИ И ЛОГАМИ ---
+
+# 1. Команда ЛОГ (показывает историю)
+@dp.message(F.text.lower() == "лог")
+async def show_roulette_log(message: types.Message):
+    async with async_session() as session:
+        from sqlalchemy import select
+        # Берем последние 10 записей из базы
+        result = await session.execute(select(RouletteLog).order_by(RouletteLog.id.desc()).limit(10))
+        logs = result.scalars().all()
+        
+        if not logs:
+            return await message.answer("📜 История пуста.")
+        
+        text = "📜 Последние 10 выпадений:\n\n"
+        for log in logs:
+            text += f"▫️ {log.color} {log.number}\n"
+        
+        await message.answer(text)
+
+# 2. Обработка кнопки "Мои ставки"
+@dp.callback_query(F.data == "my_bets")
+async def cb_my_bets(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    
+    # Ищем ставки игрока в оперативной памяти
+    user_bets = active_bets.get(chat_id, {}).get(user_id, [])
+    
+    if not user_bets:
+        return await callback.answer("У тебя нет активных ставок!", show_alert=True)
+    
+    text = "📊 Твои текущие ставки:\n"
+    total = 0
+    for b in user_bets:
+        text += f"• {b['amount']} ➔ {b['target']}\n"
+        total += b['amount']
+    text += f"\n💰 Всего: {total}"
+    
+    # Показываем уведомлением внутри Телеграм
+    await callback.answer(text, show_alert=True)
+
+# 3. Обработка кнопки "Отмена"
+@dp.callback_query(F.data == "cancel_bets")
+async def cb_cancel_bets(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    
+    user_bets = active_bets.get(chat_id, {}).get(user_id, [])
+    
+    if not user_bets:
+        return await callback.answer("Нечего отменять!", show_alert=True)
+    
+    total_return = sum(b['amount'] for b in user_bets)
+    
+    # Возвращаем деньги в базу данных
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.balance += total_return
+            await session.commit()
+    
+    # Удаляем ставки из памяти
+    del active_bets[chat_id][user_id]
+    
+    await callback.message.edit_text(f"❌ {callback.from_user.first_name}, твои ставки отменены. {total_return} 🔘 вернулись на баланс.")
+
+# --- КОНЕЦ НОВОГО БЛОКА ---
+
+# СЮДА НИЖЕ ИДЕТ ТВОЯ ФУНКЦИЯ main()
 
 async def main():
     await init_db()
