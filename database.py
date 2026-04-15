@@ -1,7 +1,8 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, BigInteger, Integer
+from sqlalchemy import Column, BigInteger, Integer, String, DateTime
+import datetime
 
 # Берем ссылку на базу от Railway
 DATABASE_URL = os.getenv("DATABASE_URL").replace("postgresql://", "postgresql+asyncpg://")
@@ -21,3 +22,11 @@ class User(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+class RouletteLog(Base):
+    __tablename__ = 'roulette_history'
+    id = Column(Integer, primary_key=True)
+    number = Column(Integer)
+    color = Column(String)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
