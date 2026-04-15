@@ -139,7 +139,18 @@ async def place_smart_bet(message: types.Message):
     if chat_id not in active_bets: active_bets[chat_id] = {}
     if message.from_user.id not in active_bets[chat_id]: active_bets[chat_id][message.from_user.id] = []
     active_bets[chat_id][message.from_user.id].extend(user_bets)
-    await message.answer(f"✅ Ставок: {len(user_bets)}\n💸 Потрачено: {total_cost}")
+      # Формируем красивый отчет
+    report = (
+        f"✅ Ставок: {len(user_bets)}\n"
+        f"💸 Потрачено: {total_cost}\n\n"
+        f"📊 Твои ставки:\n"
+    )
+    
+    for b in user_bets:
+        report += f"• {b['amount']} ➔ {b['target']}\n"
+        
+    await message.answer(report)
+
 
 # --- ЗАПУСК РУЛЕТКИ ---
 @dp.message(F.text.lower() == "го")
