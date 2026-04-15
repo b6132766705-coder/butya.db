@@ -1,9 +1,10 @@
 import asyncio
 import random
 import os
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 
 from database import init_db, async_session, User
@@ -12,22 +13,45 @@ TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Временное хранилище ставок для рулетки {chat_id: [список ставок]}
+# Хранилище ставок: {chat_id: {user_id: [список ставок]}}
 active_bets = {}
 
-# --- КЛАВИАТУРЫ ---
+# Цвета рулетки
+RED_NUMS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
 
-def main_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="👤 Профиль", callback_data="profile"))
-    builder.row(types.InlineKeyboardButton(text="🔢 Угадай число", callback_data="start_guess"))
-    builder.row(types.InlineKeyboardButton(text="🎰 Как ставить в рулетке?", callback_data="roulette_help"))
-    return builder.as_markup()
+# --- КЛАВИАТУРА (REPLY) ---
+def get_main_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="👤 Профиль")
+    builder.button(text="🔢 Угадай число")
+    builder.button(text="📜 Помощь")
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
 
-def roulette_keyboard():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🔥 КРУТИТЬ РУЛЕТКУ", callback_data="spin_roulette"))
-    return builder.as_markup()
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def check_win(bet_target, res_num):
+    """Логика проверки выигрыша"""
+    res_num = int(res_num)
+    is_red = res_num in RED_NUMS
+    is_even = res_num % 2 == 0 and res_num != 0
+
+    if bet_target == 'к': return (is_red and res_num != 0), 2
+    if bet_target == 'ч': return (not is_red and res_num != 0), 2
+    if bet_target == 'чт': return is_even, 2
+    if bet_target == 'нч': return (not is_even and res_num != 0), 2
+    
+    # Проверка диапазона (например 12-15)
+    if '-' in bet_target:
+        try:
+            start, end = map(int, bet_target.split('-'))
+            return (start <= res_num <= end), 2 # Коэффициент 2 для диапазонов (можно менять)
+        except: return False, 0
+        
+    # Проверка конкретного числа
+    if bet_target.isdigit():
+        return (int(bet_target) == res_num), 36
+        
+    return False, 0
 
 # --- ХЕНДЛЕРЫ ---
 
@@ -38,101 +62,107 @@ async def cmd_start(message: types.Message):
         if not user:
             session.add(User(tg_id=message.from_user.id))
             await session.commit()
-    await message.answer("🎰 Добро пожаловать в Казино! Выбирай игру:", reply_markup=main_menu())
+    await message.answer("🎰 Добро пожаловать! Используй кнопки ниже:", reply_markup=get_main_keyboard())
 
-@dp.callback_query(F.data == "profile")
-async def cb_profile(callback: types.CallbackQuery):
+@dp.message(F.text == "👤 Профиль")
+async def show_profile(message: types.Message):
     async with async_session() as session:
-        user = await session.get(User, callback.from_user.id)
-        await callback.message.edit_text(
-            f"👤 Профиль {callback.from_user.first_name}:\n💰 Баланс: {user.balance} 🔘\n🏆 Побед: {user.wins}",
-            reply_markup=main_menu()
-        )
+        user = await session.get(User, message.from_user.id)
+        await message.answer(f"👤 Игрок: {message.from_user.first_name}\n💰 Баланс: {user.balance} 🔘\n🏆 Побед: {user.wins}")
 
-# --- ЛОГИКА РУЛЕТКИ (ГРУППОВАЯ) ---
-
-@dp.message(F.text.regexp(r'^(\d+)\s+(к|ч|чт|нч|\d+)$'))
-async def place_bet(message: types.Message):
-    parts = message.text.split()
-    amount, target = int(parts[0]), parts[1]
+# --- НОВЫЙ ОБРАБОТЧИК МУЛЬТИ-СТАВОК (ОДНА СУММА - МНОГО ЦЕЛЕЙ) ---
+@dp.message(lambda m: re.match(r'^\d+\s+', m.text)) # Если сообщение начинается с числа
+async def place_smart_bet(message: types.Message):
     chat_id = message.chat.id
+    parts = message.text.lower().split()
+    
+    if len(parts) < 2:
+        return # Просто число без целей игнорируем
+
+    try:
+        amount = int(parts[0]) # Первая часть - это сумма
+        targets = parts[1:]    # Все остальное - это на что ставим
+    except ValueError:
+        return
+
+    user_bets = []
+    total_cost = 0
 
     async with async_session() as session:
         user = await session.get(User, message.from_user.id)
-        if user.balance < amount:
-            return await message.reply("❌ Недостаточно угадаек!")
+        
+        for target in targets:
+            # Проверяем, подходит ли цель под наши правила (к, ч, чт, нч, число или диапазон)
+            if re.match(r'^(к|ч|чт|нч|\d+-\d+|\d+)$', target):
+                if user.balance >= total_cost + amount:
+                    user_bets.append({"amount": amount, "target": target})
+                    total_cost += amount
+                else:
+                    await message.reply(f"⚠️ Баланса не хватило на ставку '{target}'. Ставлю на что хватило.")
+                    break
 
-        # Снимаем деньги сразу при ставке
-        user.balance -= amount
+        if not user_bets:
+            return await message.reply("❌ Недостаточно средств или неверный формат ставок!")
+
+        user.balance -= total_cost
         await session.commit()
 
-    # Записываем ставку в память
-    if chat_id not in active_bets:
-        active_bets[chat_id] = []
+    # Сохраняем в память
+    if chat_id not in active_bets: active_bets[chat_id] = {}
+    if message.from_user.id not in active_bets[chat_id]: active_bets[chat_id][message.from_user.id] = []
     
-    active_bets[chat_id].append({
-        "user_id": message.from_user.id,
-        "name": message.from_user.first_name,
-        "amount": amount,
-        "target": target
-    })
+    active_bets[chat_id][message.from_user.id].extend(user_bets)
 
-    await message.answer(f"✅ {message.from_user.first_name}, ставка {amount} на '{target}' принята!", 
-                         reply_markup=roulette_keyboard())
+    # Красивый отчет о принятых ставках
+    report = (
+        f"✅ **Ставок принято:** {len(user_bets)}\n"
+        f"💸 **Общая сумма:** {total_cost}\n\n"
+        f"📊 **Твои ставки:**\n"
+    )
+    for b in user_bets:
+        report += f"• {b['amount']} ➔ {b['target']}\n"
+    
+    await message.answer(report, parse_mode="Markdown")
 
-@dp.callback_query(F.data == "spin_roulette")
-async def spin_logic(callback: types.CallbackQuery):
-    chat_id = callback.message.chat.id
+
+# --- ЗАПУСК ПО КОМАНДЕ "ГО" ---
+@dp.message(F.text.lower() == "го")
+async def spin_roulette(message: types.Message):
+    chat_id = message.chat.id
     if chat_id not in active_bets or not active_bets[chat_id]:
-        return await callback.answer("Ставок еще нет!", show_alert=True)
+        return await message.answer("🎰 Ставок еще нет! Напишите ставку, например: `100 к`")
 
     res_num = random.randint(0, 36)
-    is_red = res_num in [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
-    is_even = res_num % 2 == 0 and res_num != 0
+    color_emoji = "🔴 КРАСНОЕ" if res_num in RED_NUMS else "⚫️ ЧЕРНОЕ" if res_num != 0 else "🟢 ЗЕРО"
     
-    text = f"🎰 Рулетка крутится... Выпало: **{res_num}** {'🔴' if is_red else '⚫️' if res_num != 0 else '🟢'}\n\nРезультаты:\n"
+    final_report = f"🎰 {color_emoji} {res_num}\n\n"
     
     async with async_session() as session:
-        for bet in active_bets[chat_id]:
-            win = False
-            mult = 0
-            t = bet['target']
+        # Проходим по всем игрокам в этом чате
+        for user_id, bets in active_bets[chat_id].items():
+            user = await session.get(User, user_id)
+            user_total_win = 0
+            user_name = (await bot.get_chat(user_id)).first_name
             
-            if t == 'к' and is_red: win, mult = True, 2
-            elif t == 'ч' and not is_red and res_num != 0: win, mult = True, 2
-            elif t == 'чт' and is_even: win, mult = True, 2
-            elif t == 'нч' and not is_even and res_num != 0: win, mult = True, 2
-            elif t.isdigit() and int(t) == res_num: win, mult = True, 36
-
-            user = await session.get(User, bet['user_id'])
-            if win:
-                prize = bet['amount'] * mult
-                user.balance += prize
-                user.wins += 1
-                text += f"✅ {bet['name']}: +{prize} 🔘\n"
-            else:
-                text += f"❌ {bet['name']}: -{bet['amount']} 🔘\n"
+            final_report += f"👤 {user_name}:\n"
+            
+            for b in bets:
+                is_win, mult = check_win(b['target'], res_num)
+                if is_win:
+                    win_amount = b['amount'] * mult
+                    user_total_win += win_amount
+                    final_report += f"✅ {b['amount']} → {b['target']} (Выигрыш: {win_amount})\n"
+                else:
+                    final_report += f"❌ {b['amount']} → {b['target']}\n"
+            
+            user.balance += user_total_win
+            if user_total_win > 0: user.wins += 1
+            final_report += f"💰 Итог: +{user_total_win}\n\n"
         
         await session.commit()
-    
-    active_bets[chat_id] = [] # Очищаем стол
-    await callback.message.answer(text)
-    await callback.answer()
 
-# --- ПОМОЩЬ ПО РУЛЕТКЕ ---
-@dp.callback_query(F.data == "roulette_help")
-async def help_roulette(callback: types.CallbackQuery):
-    help_text = (
-        "Как делать ставки:\n"
-        "Пиши в чат: `сумма` `на что` \n\n"
-        "Примеры:\n"
-        "▫️ `100 к` — на красное (x2)\n"
-        "▫️ `100 ч` — на черное (x2)\n"
-        "▫️ `100 чт` — на четное (x2)\n"
-        "▫️ `100 7` — на число 7 (x36)"
-    )
-    await callback.message.answer(help_text)
-    await callback.answer()
+    active_bets[chat_id] = {} # Очищаем стол
+    await message.answer(final_report)
 
 async def main():
     await init_db()
