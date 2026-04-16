@@ -193,9 +193,9 @@ def handle(m):
                     update_user(target, coins=target_user["coins"])
                     send(chat, f"✅ {target_name}: {amount:+}\n💰 Теперь: {format_money(target_user['coins'])}")
                     
-                except:
-                    send(chat, "❌ Ошибка\nПример: +100 или -50")
-                    return
+            except:
+                send(chat, "❌ Ошибка\nПример: +100 или -50")
+                return
 
     # ===== СТАВКИ =====
     if not is_private:
