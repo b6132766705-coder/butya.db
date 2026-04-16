@@ -66,7 +66,20 @@ async def cmd_start(message: types.Message):
             await session.commit()
     await message.answer("🎰 Добро пожаловать!", reply_markup=get_main_keyboard())
 
-@dp.message(F.text.lower().in_(["б", "b", "баланс"]))
+@dp.message(F.text.lower().in_(["б", "b"]))
+async def fast_balance(message: types.Message):
+    async with async_session() as session:
+        user = await session.get(User, message.from_user.id)
+        if not user:
+            user = User(tg_id=message.from_user.id)
+            session.add(user)
+            await session.commit()
+            
+        await message.answer(
+            f"💰 Баланс: {user.balance} 🔘",
+            reply_markup=get_main_keyboard(message.from_user.id, message.chat.id)
+        )
+
 @dp.message(F.text == "👤 Профиль")
 async def show_profile(message: types.Message):
     async with async_session() as session:
