@@ -14,7 +14,7 @@ bot = telebot.TeleBot(TOKEN)
 
 conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
-
+ADMIN_ID:1316137517
 # ====================== НАСТРОЙКИ ======================
 MIN_BET = 10
 BONUS_MIN = 100
@@ -169,7 +169,7 @@ def handle(m):
         return
 
   # ===== АДМИН =====
-    if m.from_user.id == ADMIN_ID:1316137517
+    if m.from_user.id == ADMIN_ID:
         
         if text.startswith("+") or text.startswith("-"):
             try:
