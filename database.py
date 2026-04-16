@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, BigInteger, String, create_url
+from sqlalchemy import Column, Integer, BigInteger, String
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 import os
 
+# Берем ссылку на базу из настроек Railway
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_async_engine(DATABASE_URL)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -13,7 +14,7 @@ class User(Base):
     tg_id = Column(BigInteger, primary_key=True)
     balance = Column(Integer, default=1000)
     wins = Column(Integer, default=0)
-    username = Column(String, default="Игрок") # Колонка для имен
+    username = Column(String, default="Игрок")
 
 class RouletteLog(Base):
     __tablename__ = 'roulette_log'
