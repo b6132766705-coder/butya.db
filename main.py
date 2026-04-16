@@ -190,6 +190,25 @@ async def show_roulette_log(message: types.Message):
         for log in logs: text += f"▫️ {log.color} {log.number}\n"
         await message.answer(text)
 
+@dp.message(F.text == "🏆 Рейтинг")
+async def show_leaderboard(message: types.Message):
+    async with async_session() as session:
+        from sqlalchemy import select
+        # Выбираем топ 10 игроков, у которых больше всего денег
+        result = await session.execute(
+            select(User).order_by(User.balance.desc()).limit(10)
+        )
+        top_users = result.scalars().all()
+        
+        text = "🏆 **ТОП-10 БОГАЧЕЙ:**\n\n"
+        for i, user in enumerate(top_users, 1):
+            # Если имени нет, пишем "Игрок"
+            name = user.username if user.username else "Скрытый игрок"
+            text += f"{i}. {name} — {user.balance} 🔘\n"
+        
+        await message.answer(text, parse_mode="Markdown")
+
+
 async def main():
     await init_db(); await dp.start_polling(bot)
 
