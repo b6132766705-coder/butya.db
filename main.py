@@ -70,8 +70,8 @@ async def cmd_start(message: types.Message):
     await message.answer("🎰 Добро пожаловать!", reply_markup=get_main_keyboard(message.chat.type))
 
 
-@# Один общий хендлер для Профиля и быстрой проверки баланса "б"
-@dp.message(F.text.lower().in_(["б", "b", "баланс", "👤 профиль"]))
+# Один общий хендлер для Профиля и быстрой проверки баланса "б"
+dp.message(F.text.lower().in_(["б", "b", "баланс", "👤 профиль"]))
 async def show_profile(message: types.Message):
     async with async_session() as session:
         user = await session.get(User, message.from_user.id)
