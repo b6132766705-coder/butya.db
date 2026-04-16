@@ -8,7 +8,7 @@ import psycopg2
 # ====================== ПОДКЛЮЧЕНИЕ ======================
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 1316137517
+
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -169,7 +169,7 @@ def handle(m):
         return
 
   # ===== АДМИН =====
-    if m.from_user.id == ADMIN_ID:
+    if m.from_user.id == ADMIN_ID:1316137517
         
         if text.startswith("+") or text.startswith("-"):
             try:
