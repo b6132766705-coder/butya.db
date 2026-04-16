@@ -168,36 +168,36 @@ def handle(m):
         send(chat,"🎮 Угадай число от 1 до 10")
         return
 
-    # ===== АДМИН =====
-    if m.from_user.id == ADMIN_ID:
-        
-        if text.startswith("+") or text.startswith("-"):
-            try:
-                amount = int(text)
+  # ===== АДМИН =====
+if m.from_user.id == ADMIN_ID:
 
-            # если не ответил на сообщение — себе
-                if not m.reply_to_message:
-                    target = uid
-                    target_name = user["name"]
-                else:
-                    target = m.reply_to_message.from_user.id
-                    target_user = get_user(target, get_name(m.reply_to_message.from_user))
-                    target_name = target_user["name"]
-                    
-                    target_user = get_user(target, target_name)
-                    
-                    target_user["coins"] += amount
-                    
-                    if target_user["coins"] < 0:
-                        target_user["coins"] = 0
-                        
-                        update_user(target, coins=target_user["coins"])
-                        
-                        send(chat, f"✅ {target_name}: {amount:+}\n💰 Теперь: {format_money(target_user['coins'])}")
-                        
-                    except:
-                        send(chat, "❌ Ошибка\nПример: +100 или -50")
-                        return
+    if text.startswith("+") or text.startswith("-"):
+        try:
+            amount = int(text)
+
+            # если не ответил — себе
+            if not m.reply_to_message:
+                target = uid
+                target_user = user
+                target_name = user["name"]
+            else:
+                target = m.reply_to_message.from_user.id
+                target_user = get_user(target, get_name(m.reply_to_message.from_user))
+                target_name = target_user["name"]
+
+            target_user["coins"] += amount
+
+            if target_user["coins"] < 0:
+                target_user["coins"] = 0
+
+            update_user(target, coins=target_user["coins"])
+
+            send(chat, f"✅ {target_name}: {amount:+}\n💰 Теперь: {format_money(target_user['coins'])}")
+
+        except:
+            send(chat, "❌ Ошибка\nПример: +100 или -50")
+
+        return
 
     # ===== СТАВКИ =====
     if not is_private:
