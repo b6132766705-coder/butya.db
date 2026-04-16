@@ -20,10 +20,8 @@ class GuessState(StatesGroup):
 active_bets = {}
 RED_NUMS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
 
-# ---------- КЛАВИАТУРА ----------
 def get_main_keyboard(chat_type: str):
     builder = ReplyKeyboardBuilder()
-    
     if chat_type == 'private':
         builder.button(text="👤 Профиль")
         builder.button(text="🔢 Угадай число")
@@ -34,11 +32,9 @@ def get_main_keyboard(chat_type: str):
         builder.button(text="🔢 Угадай число")
         builder.button(text="📊 Ставки")
         builder.button(text="❌ Отменить")
-    
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
-# ---------- МАТЕМАТИКА ----------
 def check_win(bet_target, res_num):
     res_num = int(res_num)
     is_red = res_num in RED_NUMS
@@ -55,8 +51,6 @@ def check_win(bet_target, res_num):
     if bet_target.isdigit(): return (int(bet_target) == res_num), 36
     return False, 0
 
-# ---------- ХЕНДЛЕРЫ ----------
-
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     async with async_session() as session:
@@ -68,7 +62,6 @@ async def cmd_start(message: types.Message):
         await session.commit()
     await message.answer("🎰 Добро пожаловать!", reply_markup=get_main_keyboard(message.chat.type))
 
-# Профиль и Баланс
 @dp.message(lambda m: m.text == "👤 Профиль" or m.text.lower() in ["б", "b", "баланс"])
 async def show_profile(message: types.Message):
     async with async_session() as session:
@@ -77,11 +70,9 @@ async def show_profile(message: types.Message):
             user = User(tg_id=message.from_user.id, username=message.from_user.first_name)
             session.add(user)
             await session.commit()
-        
         response = f"👤 **Игрок:** {user.username}\n💰 **Баланс:** {user.balance} 🔘\n🏆 **Побед:** {user.wins}"
         await message.answer(response, reply_markup=get_main_keyboard(message.chat.type), parse_mode="Markdown")
 
-# Угадай число
 @dp.message(F.text == "🔢 Угадай число")
 async def start_guess(message: types.Message, state: FSMContext):
     number = random.randint(1, 10)
@@ -106,7 +97,6 @@ async def process_guess(message: types.Message, state: FSMContext):
     else:
         await message.answer(f"💀 Было {secret}", reply_markup=get_main_keyboard(message.chat.type)); await state.clear()
 
-# Рейтинг
 @dp.message(F.text == "🏆 Рейтинг")
 async def show_leaderboard(message: types.Message):
     async with async_session() as session:
@@ -145,7 +135,6 @@ async def txt_cancel_bets(message: types.Message):
     del active_bets[chat_id][user_id]
     await message.answer(f"❌ Ставки отменены!", reply_markup=get_main_keyboard(message.chat.type))
 
-# Логика ставок
 @dp.message(lambda m: re.match(r'^(все|\d+)\s+', m.text.lower()))
 async def place_smart_bet(message: types.Message):
     if message.chat.type == 'private': return await message.answer("🎰 В рулетку играем только в группах!")
@@ -164,7 +153,6 @@ async def place_smart_bet(message: types.Message):
     active_bets.setdefault(message.chat.id, {}).setdefault(message.from_user.id, []).extend(user_bets)
     await message.answer(f"✅ Ставки приняты!", reply_markup=get_main_keyboard(message.chat.type))
 
-# Рулетка
 @dp.message(F.text.lower() == "го")
 async def spin_roulette(message: types.Message):
     chat_id = message.chat.id
@@ -192,7 +180,6 @@ async def spin_roulette(message: types.Message):
     active_bets[chat_id] = {}
     await message.answer(final_report, reply_markup=get_main_keyboard(message.chat.type))
 
-# Лог последних игр
 @dp.message(F.text.lower() == "лог")
 async def show_roulette_log(message: types.Message):
     async with async_session() as session:
