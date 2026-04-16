@@ -18,6 +18,8 @@ class User(Base):
     tg_id = Column(BigInteger, primary_key=True)
     balance = Column(Integer, default=1000)
     wins = Column(Integer, default=0)
+    username = Column(String, default="Игрок")
+
 
 async def init_db():
     async with engine.begin() as conn:
