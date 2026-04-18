@@ -77,7 +77,7 @@ logging.basicConfig(level=logging.INFO)
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     get_user(message.from_user.id)
-    await message.answer("Привет! Я Бутя. Даю 10 000 Угадаек! Играй в рулетку или угадай число.", 
+    await message.answer("Привет! Я Угадайка. Даю 10 000 Угадаек! Играй в рулетку или угадай число.", 
                          reply_markup=get_main_kb(message.chat.type))
 
 @dp.message(F.text == "👤 Профиль")
