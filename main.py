@@ -11,9 +11,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Message
 
 # --- НАСТРОЙКИ ---
-TOKEN = "ТВОЙ_ТОКЕН_ИЗ_BOTFATHER"
+TOKEN = "ТОКЕН"
 ADMIN_ID = 123456789 # Твой ID (узнай его в @userinfobot)
-DB_PATH = "/app/data/butya.db" # Путь для Railway Volume
+DB_PATH = "/app/data/telegram-bot1" # Путь для Railway Volume
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
