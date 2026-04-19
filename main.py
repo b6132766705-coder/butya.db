@@ -53,6 +53,11 @@ class GameStates(StatesGroup):
 
 pending_bets = {}
 
+def fmt(num):
+    """Функция для превращения 1000000 в 1 000 000"""
+    return f"{int(num):,}".replace(",", " ")
+
+
 # --- КЛАВИАТУРЫ ---
 def get_main_kb(chat_type):
     if chat_type == "private":
@@ -80,12 +85,15 @@ async def cmd_start(message: Message):
 @dp.message(F.text == "👤 Профиль")
 async def show_profile(message: Message):
     balance, _ = get_user(message.from_user.id)
-    await message.answer(f"💰 Ваш баланс: **{balance}** Угадаек.", parse_mode="Markdown")
+# Результат: 💰 Ваш баланс: 10 004 500 Угадаек.
+    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.")
+
 
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
-    balance, _ = get_user(message.from_user.id)
-    await message.answer(f"💰 Ваш баланс: **{balance}**", parse_mode="Markdown")
+    balance, _ = get_user(massage.from_user.id)
+    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.")
+
 
 @dp.message(F.text.lower().startswith("п "), F.reply_to_message)
 async def transfer(message: Message):
@@ -179,7 +187,7 @@ async def take_bet(message: Message):
         update_balance(message.from_user.id, -total_needed)
         
         report = f"✅ Ставок: {len(targets)}\n💸 Потрачено: {total_needed}\n\n📊 Твои ставки:\n"
-        for t in targets: report += f"• {amount} ➔ {t}\n"
+        for t in targets: report += f"• {fmt(amount)} ➔ {t}\n"
         await message.answer(report)
     except: pass
 
@@ -227,9 +235,9 @@ async def spin(message: Message):
             if is_win:
                 win_val = int(bet['amount'] * mult)
                 users_results[uid]["total_win"] += win_val
-                users_results[uid]["results"].append(f"✅ {bet['amount']} ➔ {t} (+{win_val})")
+                users_results[uid]["results"].append(f"✅ {fmt(bet['amount'])} ➔ {t} (+{win_val})")
             else:
-                users_results[uid]["results"].append(f"❌ {bet['amount']} ➔ {t}")
+                users_results[uid]["results"].append(f"❌ {fmt(bet['amount'])} ➔ {t}")
 
     for uid, data in users_results.items():
         res_text += f"👤 {data['name']}:\n"
