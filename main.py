@@ -16,6 +16,11 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1316137517  # ЗАМЕНИ НА СВОЙ ID
 DB_PATH = "/app/data/butya.db"
 
+# --- ФУНКЦИЯ ДЛЯ КРАСИВЫХ ЧИСЕЛ ---
+def fmt(num):
+    """Функция для превращения 1000000 в 1 000 000"""
+    return f"{int(num):,}".replace(",", " ")
+
 # --- БАЗА ДАННЫХ ---
 def init_db():
     if not os.path.exists("/app/data"):
@@ -40,10 +45,6 @@ def get_user(user_id):
     conn.close()
     return res
 
-def fmt(num):
-    """Функция для превращения 1000000 в 1 000 000"""
-    return f"{int(num):,}".replace(",", " ")
-
 def update_balance(user_id, amount):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -56,7 +57,6 @@ class GameStates(StatesGroup):
     guessing = State()
 
 pending_bets = {}
-
 
 # --- КЛАВИАТУРЫ ---
 def get_main_kb(chat_type):
@@ -79,21 +79,14 @@ logging.basicConfig(level=logging.INFO)
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     get_user(message.from_user.id)
-    await message.answer(f"Привет! Я Бутя. Даю 10000 Угадаек! Играй в рулетку или угадай число.", 
+    await message.answer(f"Привет! Я Бутя. Даю {fmt(10000)} Угадаек! Играй в рулетку или угадай число.", 
                          reply_markup=get_main_kb(message.chat.type))
 
 @dp.message(F.text == "👤 Профиль")
-async def show_profile(message: Message):
-    balance, _ = get_user(message.from_user.id)
-# Результат: 💰 Ваш баланс: 10 004 500 Угадаек.
-    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.")
-
-
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
-    balance, _ = get_user(massage.from_user.id)
-    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.")
-
+    balance, _ = get_user(message.from_user.id)
+    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.", parse_mode="Markdown")
 
 @dp.message(F.text.lower().startswith("п "), F.reply_to_message)
 async def transfer(message: Message):
@@ -108,7 +101,7 @@ async def transfer(message: Message):
         
         update_balance(sender_id, -amount)
         update_balance(receiver.id, amount)
-        await message.answer(f"✅ Переведено {amount} Угадаек для {receiver.first_name}")
+        await message.answer(f"✅ Переведено {fmt(amount)} Угадаек для {receiver.first_name}")
     except: pass
 
 # --- МИНИ-ИГРА: УГАДАЙ ЧИСЛО ---
@@ -129,7 +122,7 @@ async def process_guess(message: Message, state: FSMContext):
 
     if guess == target:
         update_balance(message.from_user.id, 50)
-        await message.answer(f"🎉 Угадал! +50 Угадаек.", reply_markup=get_main_kb(message.chat.type))
+        await message.answer(f"🎉 Угадал! +{fmt(50)} Угадаек.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
     elif attempts > 0:
         hint = "Больше!" if target > guess else "Меньше!"
@@ -138,6 +131,7 @@ async def process_guess(message: Message, state: FSMContext):
     else:
         await message.answer(f"Попытки кончились! Это было {target}.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
+
 
 # --- УПРАВЛЕНИЕ СТАВКАМИ ---
 @dp.message(F.text == "📊 Ставки")
