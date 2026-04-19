@@ -9,12 +9,17 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardRemove
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Message
 
 # --- НАСТРОЙКИ ---
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 1316137517   # ЗАМЕНИ НА СВОЙ ID (узнай в @userinfobot)
+ADMIN_ID = 123456789  # ЗАМЕНИ НА СВОЙ ID
 DB_PATH = "/app/data/butya.db"
+
+# --- ФУНКЦИЯ ДЛЯ КРАСИВЫХ ЧИСЕЛ ---
+def fmt(num):
+    """Превращает 1300000 в 1 300 000"""
+    return f"{int(num):,}".replace(",", " ")
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
@@ -47,11 +52,10 @@ def update_balance(user_id, amount):
     conn.commit()
     conn.close()
 
-# --- СОСТОЯНИЯ ---
+# --- СОСТОЯНИЯ И ПАМЯТЬ ---
 class GameStates(StatesGroup):
     guessing = State()
 
-# Временное хранилище ставок: {chat_id: {user_id: [список ставок]}}
 pending_bets = {}
 
 # --- КЛАВИАТУРЫ ---
@@ -61,7 +65,6 @@ def get_main_kb(chat_type):
             [KeyboardButton(text="🎮 Играть"), KeyboardButton(text="👤 Профиль")],
             [KeyboardButton(text="🏆 Рейтинг"), KeyboardButton(text="🎁 Бонус")]
         ], resize_keyboard=True)
-    # Кнопки для групп
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🎮 Играть"), KeyboardButton(text="👤 Профиль")],
         [KeyboardButton(text="📊 Ставки"), KeyboardButton(text="🚫 Отмена")]
@@ -72,20 +75,18 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# --- КОМАНДЫ ---
-
+# --- БАЗОВЫЕ КОМАНДЫ ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     get_user(message.from_user.id)
-    await message.answer("Привет! Я Угадайка. Даю 10 000 Угадаек! Играй в рулетку или угадай число.", 
+    await message.answer(f"Привет! Я Бутя. Даю {fmt(10000)} Угадаек! Играй в рулетку или угадай число.", 
                          reply_markup=get_main_kb(message.chat.type))
 
 @dp.message(F.text == "👤 Профиль")
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
     balance, _ = get_user(message.from_user.id)
-    formatted_balance = f"{balance:,}".replace(",", " ")
-    await message.answer(f"💰 Ваш баланс: **{balance}** Угадаек.", parse_mode="Markdown")
+    await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.", parse_mode="Markdown")
 
 @dp.message(F.text.lower().startswith("п "), F.reply_to_message)
 async def transfer(message: Message):
@@ -100,7 +101,7 @@ async def transfer(message: Message):
         
         update_balance(sender_id, -amount)
         update_balance(receiver.id, amount)
-        await message.answer(f"✅ Переведено {amount} Угадаек для {receiver.first_name}")
+        await message.answer(f"✅ Переведено {fmt(amount)} Угадаек для {receiver.first_name}")
     except: pass
 
 # --- МИНИ-ИГРА: УГАДАЙ ЧИСЛО ---
@@ -121,7 +122,7 @@ async def process_guess(message: Message, state: FSMContext):
 
     if guess == target:
         update_balance(message.from_user.id, 50)
-        await message.answer("🎉 Угадал! +50 Угадаек.", reply_markup=get_main_kb(message.chat.type))
+        await message.answer(f"🎉 Угадал! +{fmt(50)} Угадаек.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
     elif attempts > 0:
         hint = "Больше!" if target > guess else "Меньше!"
@@ -131,7 +132,7 @@ async def process_guess(message: Message, state: FSMContext):
         await message.answer(f"Попытки кончились! Это было {target}.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
 
-#--------------------Команды «Ставки» и «Отмена»----------
+# --- УПРАВЛЕНИЕ СТАВКАМИ ---
 @dp.message(F.text == "📊 Ставки")
 async def show_my_bets(message: Message):
     cid = message.chat.id
@@ -143,7 +144,7 @@ async def show_my_bets(message: Message):
     text = "📝 Твои текущие ставки:\n"
     for b in my_bets:
         for t in b['targets']:
-            text += f"• {b['amount']} ➔ {t}\n"
+            text += f"• {fmt(b['amount'])} ➔ {t}\n"
     await message.answer(text)
 
 @dp.message(F.text == "🚫 Отмена")
@@ -151,13 +152,11 @@ async def cancel_my_bets(message: Message):
     cid = message.chat.id
     uid = message.from_user.id
     if cid in pending_bets:
-        # Считаем сумму для возврата
         refund = sum(b['amount'] * len(b['targets']) for b in pending_bets[cid] if b['user_id'] == uid)
         if refund > 0:
-            # Удаляем ставки пользователя
             pending_bets[cid] = [b for b in pending_bets[cid] if b['user_id'] != uid]
             update_balance(uid, refund)
-            await message.answer(f"✅ Твои ставки отменены. {refund} Угадаек возвращены на баланс.")
+            await message.answer(f"✅ Твои ставки отменены. {fmt(refund)} Угадаек возвращены на баланс.")
         else:
             await message.answer("У тебя нет активных ставок.")
 
@@ -180,8 +179,8 @@ async def take_bet(message: Message):
         pending_bets[cid].append({"user_id": message.from_user.id, "name": message.from_user.first_name, "amount": amount, "targets": targets})
         update_balance(message.from_user.id, -total_needed)
         
-        report = f"✅ Ставок: {len(targets)}\n💸 Потрачено: {total_needed}\n\n📊 Твои ставки:\n"
-        for t in targets: report += f"• {amount} ➔ {t}\n"
+        report = f"✅ Ставок: {len(targets)}\n💸 Потрачено: {fmt(total_needed)}\n\n📊 Твои ставки:\n"
+        for t in targets: report += f"• {fmt(amount)} ➔ {t}\n"
         await message.answer(report)
     except: pass
 
@@ -193,7 +192,12 @@ async def spin(message: Message):
     
     win_num = random.randint(0, 36)
     
-    # Определяем цвет и текст
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO history (number) VALUES (?)", (win_num,))
+    conn.commit()
+    conn.close()
+    
     if win_num == 0:
         color_emoji, color_text = "🟢", "ЗЕРО"
     elif win_num % 2 == 0:
@@ -202,9 +206,7 @@ async def spin(message: Message):
         color_emoji, color_text = "⚫", "ЧЁРНОЕ"
         
     res_text = f"🎰 {color_emoji} {color_text} {win_num}\n\n"
-    
-    # Группируем ставки по пользователям для красивого вывода
-    users_results = {} # {user_id: {"name": str, "results": [], "total_win": int, "total_spent": int}}
+    users_results = {} 
 
     for bet in pending_bets[cid]:
         uid = bet['user_id']
@@ -217,7 +219,6 @@ async def spin(message: Message):
         for t in bet['targets']:
             is_win = False
             mult = 0
-            # Логика проверки (сокращения: к=красное, ч=черное)
             if t in ["к", "кр", "красное"] and win_num != 0 and win_num % 2 == 0: is_win, mult = True, 2
             elif t in ["ч", "чр", "черное"] and win_num % 2 != 0: is_win, mult = True, 2
             elif t == "чет" and win_num != 0 and win_num % 2 == 0: is_win, mult = True, 2
@@ -232,36 +233,29 @@ async def spin(message: Message):
             if is_win:
                 win_val = int(bet['amount'] * mult)
                 users_results[uid]["total_win"] += win_val
-                formatted_amount = f"{bet['amount']:,}".replace(",", " ")
-                formatted_win = f"{win_val:,}".replace(",", " ")
-                users_results[uid]["results"].append(f"✅ {formatted_amount} ➔ {t} (+{formatted_win})")
+                users_results[uid]["results"].append(f"✅ {fmt(bet['amount'])} ➔ {t} (+{fmt(win_val)})")
             else:
-                users_results[uid]["results"].append(f"❌ {bet['amount']} ➔ {t}")
+                users_results[uid]["results"].append(f"❌ {fmt(bet['amount'])} ➔ {t}")
 
-    # Формируем финальное сообщение
     for uid, data in users_results.items():
         res_text += f"👤 {data['name']}:\n"
         res_text += "\n".join(data['results']) + "\n"
         
-        # Считаем чистый итог (выигрыш минус потраченное)
         final_profit = data['total_win'] - data['total_spent']
         profit_sign = "+" if final_profit >= 0 else ""
-        formatted_profit = f"{abs(final_profit):,}".replace(",", " ")
-        res_text += f"💰 Итог: {profit_sign}{final_profit}\n\n"
+        res_text += f"💰 Итог: {profit_sign}{fmt(abs(final_profit))}\n\n"
         
-        # Выплачиваем только выигрыш (ставки уже были списаны)
         if data['total_win'] > 0:
             update_balance(uid, data['total_win'])
             
-    pending_bets[cid] = [] # Очищаем раунд
+    pending_bets[cid] = [] 
     await message.answer(res_text)
 
-#------------------------лог----------------
+# --- ИСТОРИЯ ---
 @dp.message(F.text.lower() == "лог")
 async def show_log(message: Message):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    # Берем последние 10 записей
     cur.execute("SELECT number FROM history ORDER BY rowid DESC LIMIT 10")
     res = cur.fetchall()
     conn.close()
@@ -270,19 +264,14 @@ async def show_log(message: Message):
         return await message.answer("📜 История пока пуста. Сделайте первую ставку!")
 
     out = "📜 История:\n\n"
-    
-    # Перебираем результаты и формируем список
     for i, row in enumerate(res, 1):
         num = row[0]
-        
-        # Определяем цвет для каждого числа из истории
         if num == 0:
             color_emoji, color_text = "🟢", "ЗЕРО"
         elif num % 2 == 0:
             color_emoji, color_text = "🔴", "КРАСНОЕ"
         else:
             color_emoji, color_text = "⚫", "ЧЁРНОЕ"
-            
         out += f"{i}. 🎰 {color_emoji} {color_text} {num}\n"
     
     await message.answer(out)
@@ -292,9 +281,9 @@ async def show_log(message: Message):
 async def admin_power(message: Message):
     if message.text.startswith(("+", "-")):
         try:
-            val = int(message.text)
+            val = int(message.text.replace(" ", "")) # Позволяем админу писать с пробелами: + 10 000
             update_balance(message.reply_to_message.from_user.id, val)
-            await message.answer(f"👑 Изменено на {val}")
+            await message.answer(f"👑 Изменено на {fmt(val)}")
         except: pass
 
 async def main():
