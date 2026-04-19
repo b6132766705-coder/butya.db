@@ -232,7 +232,9 @@ async def spin(message: Message):
             if is_win:
                 win_val = int(bet['amount'] * mult)
                 users_results[uid]["total_win"] += win_val
-                users_results[uid]["results"].append(f"✅ {bet['amount']} ➔ {t} (+{win_val})")
+                formatted_amount = f"{bet['amount']:,}".replace(",", " ")
+                formatted_win = f"{win_val:,}".replace(",", " ")
+                users_results[uid]["results"].append(f"✅ {formatted_amount} ➔ {t} (+{formatted_win})")
             else:
                 users_results[uid]["results"].append(f"❌ {bet['amount']} ➔ {t}")
 
