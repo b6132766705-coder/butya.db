@@ -84,6 +84,7 @@ async def cmd_start(message: Message):
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
     balance, _ = get_user(message.from_user.id)
+    formatted_balance = f"{balance:,}".replace(",", " ")
     await message.answer(f"💰 Ваш баланс: **{balance}** Угадаек.", parse_mode="Markdown")
 
 @dp.message(F.text.lower().startswith("п "), F.reply_to_message)
@@ -243,6 +244,7 @@ async def spin(message: Message):
         # Считаем чистый итог (выигрыш минус потраченное)
         final_profit = data['total_win'] - data['total_spent']
         profit_sign = "+" if final_profit >= 0 else ""
+        formatted_profit = f"{abs(final_profit):,}".replace(",", " ")
         res_text += f"💰 Итог: {profit_sign}{final_profit}\n\n"
         
         # Выплачиваем только выигрыш (ставки уже были списаны)
