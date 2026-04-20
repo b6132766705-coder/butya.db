@@ -171,35 +171,64 @@ async def cancel_my_bets(message: Message):
             update_balance(uid, refund)
             return await message.answer(f"✅ Ставки отменены. Возвращено: {fmt(refund)}")
     await message.answer("У тебя нет активных ставок.")
-
-@dp.message(lambda m: m.text and m.text[0].isdigit())
+@dp.message(lambda m: m.text and (m.text.split()[0].isdigit() or m.text.lower().startswith("все") or m.text.lower().startswith("всё")))
 async def take_bet(message: Message):
     parts = message.text.split()
+    if len(parts) < 2:
+        return # Если только сумма без цели — игнорируем
+
     try:
-        amount = int(parts[0])
+        # 1. Определяем сумму ставки
+        uid = message.from_user.id
+        user_name = message.from_user.full_name
+        bal, _ = get_user(uid, user_name)
+        
+        first_word = parts[0].lower()
         targets = parts[1:]
-        if not targets or amount <= 0: return
-        
-        # Исправлено: добавлено имя
-        bal, _ = get_user(message.from_user.id, message.from_user.full_name)
-        total_needed = amount * len(targets)
-        if bal < total_needed: return await message.answer("❌ Не хватает Угадаек!")
-        
+        count = len(targets)
+
+        if first_word in ["все", "всё"]:
+            # Делим весь баланс на количество целей
+            amount = bal // count
+            if amount <= 0:
+                return await message.answer("❌ Твоего баланса не хватит даже на минимальную ставку!")
+        else:
+            amount = int(first_word)
+            if amount <= 0: return
+
+        # 2. Проверяем общую сумму
+        total_needed = amount * count
+        if bal < total_needed:
+            return await message.answer(f"❌ Не хватает Угадаек! Нужно: {fmt(total_needed)}")
+
+        # 3. Записываем ставку
         cid = message.chat.id
-        if cid not in pending_bets: pending_bets[cid] = []
+        if cid not in pending_bets:
+            pending_bets[cid] = []
         
         pending_bets[cid].append({
-            "user_id": message.from_user.id, 
+            "user_id": uid, 
             "name": message.from_user.first_name, 
             "amount": amount, 
             "targets": targets
         })
-        update_balance(message.from_user.id, -total_needed)
         
-        report = f"✅ Ставок: {len(targets)}\n💸 Потрачено: {fmt(total_needed)}\n\n📊 Твои ставки:\n"
-        for t in targets: report += f"• {fmt(amount)} ➔ {t}\n"
-        await message.answer(report)
-    except: pass
+        update_balance(uid, -total_needed)
+        
+        # 4. Красивый отчет
+        report = f"✅ Ставок принято: {count}\n"
+        if first_word in ["все", "всё"]:
+            report += f"🔥 **ВА-БАНК!**\n"
+        report += f"💸 Потрачено: {fmt(total_needed)}\n\n📊 Детали:\n"
+        
+        for t in targets:
+            report += f"• {fmt(amount)} ➔ {t}\n"
+            
+        await message.answer(report, parse_mode="Markdown")
+        
+    except Exception as e:
+        logging.error(f"Ошибка в ставке: {e}")
+
 
 @dp.message(F.text.lower() == "го")
 async def spin(message: Message):
