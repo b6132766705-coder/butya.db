@@ -175,41 +175,63 @@ async def cancel_my_bets(message: Message):
 #--------Рулетка-------
 @dp.message(lambda m: m.text and (m.text.split()[0].isdigit() or m.text.lower().startswith("все") or m.text.lower().startswith("всё")))
 async def take_bet(message: Message):
-    # Разделяем сообщение на слова
     parts = message.text.split()
-    
-    # Проверка: если ввели только "Все" или "1000" без цели (например "Все к")
     if len(parts) < 2:
         return 
 
     try:
+        # === НОВАЯ ПРОВЕРКА ЦЕЛЕЙ СТАВКИ ===
+        raw_targets = [t.lower() for t in parts[1:]]
+        valid_targets = []
+        invalid_targets = []
+        
+        for t in raw_targets:
+            # Проверяем цвета и чет/нечет
+            if t in ["к", "кр", "красное", "ч", "чр", "черное", "чет", "нечет"]:
+                valid_targets.append(t)
+            # Проверяем конкретные числа от 0 до 36
+            elif t.isdigit() and 0 <= int(t) <= 36:
+                valid_targets.append(t)
+            # Проверяем диапазоны (например, 1-12)
+            elif "-" in t:
+                try:
+                    low, high = map(int, t.split("-"))
+                    if 0 <= low <= 36 and 0 <= high <= 36 and low < high:
+                        valid_targets.append(t)
+                    else:
+                        invalid_targets.append(t)
+                except:
+                    invalid_targets.append(t)
+            else:
+                invalid_targets.append(t)
+                
+        # Если есть хоть одна ошибка (опечатка), отменяем ставку полностью
+        if invalid_targets:
+            return await message.answer(f"❌ Ошибка в купоне!\nЯ не понимаю эти ставки: **{', '.join(invalid_targets)}**\n\nРазрешены: числа (0-36), цвета (к, ч), чет/нечет и диапазоны (например 1-18).", parse_mode="Markdown")
+        
+        # Если всё верно, продолжаем работу
+        targets = valid_targets
+        count = len(targets)
+
         uid = message.from_user.id
         user_name = message.from_user.full_name
-        
-        # Получаем актуальный баланс
         res = get_user(uid, user_name)
         bal = res[0]
         
-        first_word = parts[0].lower() # Сумма или слово "Все"
-        targets = parts[1:]           # Список целей (к, 22, 1-10 и т.д.)
-        count = len(targets)          # Количество целей
+        first_word = parts[0].lower() 
 
-        # 1. Считаем сумму ставки на каждую цель
         if first_word in ["все", "всё"]:
-            amount = bal // count  # Делим всё на количество целей
+            amount = bal // count  
             if amount <= 0:
-                return await message.answer("❌ Твоего баланса не хватит даже на 1 угадайку для каждой цели!")
+                return await message.answer("❌ Твоего баланса не хватит!")
         else:
             amount = int(first_word)
-            if amount <= 0:
-                return
+            if amount <= 0: return
 
-        # 2. Проверяем, хватает ли денег на все ставки
         total_needed = amount * count
         if bal < total_needed:
             return await message.answer(f"❌ Не хватает Угадаек!\nВаш баланс: {fmt(bal)}\nНужно: {fmt(total_needed)}")
 
-        # 3. Регистрируем ставку в памяти
         cid = message.chat.id
         if cid not in pending_bets:
             pending_bets[cid] = []
@@ -221,10 +243,8 @@ async def take_bet(message: Message):
             "targets": targets
         })
         
-        # 4. Списываем деньги
         update_balance(uid, -total_needed)
         
-        # 5. Красивый отчет с пробелами в числах
         report = f"✅ Ставок принято: {count}\n"
         if first_word in ["все", "всё"]:
             report += f"🔥 **ВА-БАНК!**\n"
@@ -237,6 +257,7 @@ async def take_bet(message: Message):
         
     except Exception as e:
         logging.error(f"Ошибка в ставке: {e}")
+
 
 @dp.message(F.text.lower() == "го")
 async def spin(message: Message):
