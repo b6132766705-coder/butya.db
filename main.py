@@ -140,7 +140,7 @@ async def get_bonus(message: Message):
             return await message.answer(f"⏳ Бонус уже получен!\nВозвращайся через **{hours} ч. {minutes} мин.**", parse_mode="Markdown")
 
     # Генерируем случайный бонус
-    bonus_amount = random.randint(10000, 50000)
+    bonus_amount = random.randint(100, 5000)
     
     # Обновляем баланс и время в базе
     cur.execute("UPDATE users SET balance = balance + ?, last_bonus = ? WHERE id = ?", 
