@@ -28,22 +28,34 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute('''CREATE TABLE IF NOT EXISTS users 
-                   (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, last_bonus TEXT)''')
+                   (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, last_bonus TEXT, name TEXT)''')
+    # Эта строка нужна, если колонка name еще не создана в старой базе:
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN name TEXT")
+    except:
+        pass
     cur.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
     conn.commit()
     conn.close()
 
-def get_user(user_id):
+
+def get_user(user_id, name):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("SELECT balance, last_bonus FROM users WHERE id = ?", (user_id,))
     res = cur.fetchone()
     if not res:
-        cur.execute("INSERT INTO users (id) VALUES (?)", (user_id,))
+        # Если игрока нет, создаем его с именем
+        cur.execute("INSERT INTO users (id, balance, name) VALUES (?, ?, ?)", (user_id, 10000, name))
         conn.commit()
         res = (10000, None)
+    else:
+        # Если игрок есть, обновляем его имя (вдруг он его сменил в профиле)
+        cur.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
+        conn.commit()
     conn.close()
     return res
+
 
 def update_balance(user_id, amount):
     conn = sqlite3.connect(DB_PATH)
@@ -78,15 +90,18 @@ logging.basicConfig(level=logging.INFO)
 # --- БАЗОВЫЕ КОМАНДЫ ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    get_user(message.from_user.id)
-    await message.answer(f"Привет! Я Бутя. Даю {fmt(10000)} Угадаек! Играй в рулетку или угадай число.", 
+    # Добавляем имя: message.from_user.full_name
+    get_user(message.from_user.id, message.from_user.full_name)
+    await message.answer(f"Привет! Я Бутя. Даю {fmt(10000)} Угадаек!", 
                          reply_markup=get_main_kb(message.chat.type))
 
 @dp.message(F.text == "👤 Профиль")
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
-    balance, _ = get_user(message.from_user.id)
+    # И тут добавляем имя
+    balance, _ = get_user(message.from_user.id, message.from_user.full_name)
     await message.answer(f"💰 Ваш баланс: **{fmt(balance)}** Угадаек.", parse_mode="Markdown")
+
 
 @dp.message(F.text.lower().startswith("п "), F.reply_to_message)
 async def transfer(message: Message):
@@ -140,8 +155,8 @@ async def get_bonus(message: Message):
 async def show_rating(message: Message):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    # Достаем топ-10 игроков по балансу
-    cur.execute("SELECT id, balance FROM users ORDER BY balance DESC LIMIT 10")
+    # Достаем имя (name) и баланс (balance)
+    cur.execute("SELECT name, balance, id FROM users ORDER BY balance DESC LIMIT 10")
     top_users = cur.fetchall()
     conn.close()
 
@@ -151,10 +166,13 @@ async def show_rating(message: Message):
     text = "🏆 <b>ТОП-10 БОГАЧЕЙ:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
 
-    for i, (uid, bal) in enumerate(top_users):
+    for i, (name, bal, uid) in enumerate(top_users):
         medal = medals[i] if i < 3 else f"<b>{i+1}.</b>"
-        # Делаем секретную ссылку: вместо длинного ID будет кликабельное слово "Игрок"
-        text += f"{medal} <a href='tg://user?id={uid}'>Игрок</a> — <b>{fmt(bal)}</b>\n"
+        # Если имени нет в базе (старый игрок), напишем просто "Игрок"
+        display_name = name if name else "Игрок"
+        
+        # Делаем имя кликабельным
+        text += f"{medal} <a href='tg://user?id={uid}'>{display_name}</a> — <b>{fmt(bal)}</b>\n"
 
     await message.answer(text, parse_mode="HTML")
 
