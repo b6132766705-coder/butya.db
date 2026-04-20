@@ -229,7 +229,7 @@ async def spin(message: Message):
             if is_win:
                 win_val = int(bet['amount'] * mult)
                 users_results[uid]["total_win"] += win_val
-                users_results[uid]["results"].append(f"✅ {fmt(bet['amount'])} ➔ {t} (+{win_val})")
+                users_results[uid]["results"].append(f"✅ {fmt(bet['amount'])} ➔ {t} (+{fmt(win_val)})")
             else:
                 users_results[uid]["results"].append(f"❌ {fmt(bet['amount'])} ➔ {t}")
 
@@ -239,7 +239,7 @@ async def spin(message: Message):
         
         final_profit = data['total_win'] - data['total_spent']
         profit_sign = "+" if final_profit >= 0 else ""
-        res_text += f"💰 Итог: {profit_sign}{abs(final_profit)}\n\n"
+        res_text += f"💰 Итог: {profit_sign}{fmt(abs(final_profit))}\n\n"
         
         if data['total_win'] > 0:
             update_balance(uid, data['total_win'])
@@ -270,7 +270,7 @@ async def admin_power(message: Message):
         try:
             val = int(message.text.replace(" ", ""))
             update_balance(message.reply_to_message.from_user.id, val)
-            await message.answer(f"👑 Изменено на {val}")
+            await message.answer(f"👑 Изменено на {fmt(val)}")
         except: pass
 
 async def main():
