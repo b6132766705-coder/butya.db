@@ -26,14 +26,21 @@ dp = Dispatcher()
 class ActivityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
-            now_str = datetime.now().isoformat()
             uid = event.from_user.id
+            name = event.from_user.full_name
+            now_str = datetime.now().isoformat()
+            
+            # Сразу гарантируем, что юзер есть в базе и обновляем его активность
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
-            # Обновляем активность
-            cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now_str, uid))
+            cur.execute("""
+                INSERT INTO users (id, name, last_active, balance) 
+                VALUES (?, ?, ?, 10000) 
+                ON CONFLICT(id) DO UPDATE SET last_active = ?, name = ?
+            """, (uid, name, now_str, now_str, name))
             conn.commit()
             conn.close()
+            
         return await handler(event, data)
 
 dp.message.middleware(ActivityMiddleware())
