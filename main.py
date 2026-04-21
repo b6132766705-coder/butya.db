@@ -625,9 +625,10 @@ async def admin_power(message: Message):
         except: pass
 
 # --- АДМИН-ЧИТ: ОБНУЛЕНИЕ ТАЙМЕРОВ ---
-@dp.message(F.text.lower() == "обнулить", F.reply_to_message, lambda m: m.from_user.id == ADMIN_ID)
+@dp.message(lambda m: m.text and m.text.lower().startswith("обнулить"), lambda m: m.from_user.id == ADMIN_ID)
 async def admin_reset(message: Message):
-    victim = message.reply_to_message.from_user
+    # Если есть реплай - берем того, кому ответили. Если нет - берем самого админа.
+    target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -635,11 +636,11 @@ async def admin_reset(message: Message):
                    last_steal = NULL, 
                    shame_mark = NULL, 
                    last_bonus = NULL 
-                   WHERE id = ?""", (victim.id,))
+                   WHERE id = ?""", (target_user.id,))
     conn.commit()
     conn.close()
     
-    await message.answer(f"🪄 **Магия админа!**\nДля {victim.first_name} все таймеры обнулены.")
+    await message.answer(f"🪄 **Магия!** Таймеры для {target_user.first_name} сброшены.")
 
 # --- ЗАПУСК ---
 async def main():
