@@ -17,11 +17,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1316137517 
 DB_PATH = "/app/data/butya.db"
 
-# 1. СНАЧАЛА создаем объекты бота и диспетчера
+# 1. Инициализация (Только один раз!)
+logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# 2. ОПРЕДЕЛЯЕМ класс шпиона
+# 2. ШПИОН АКТИВНОСТИ
 class ActivityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
@@ -29,16 +30,15 @@ class ActivityMiddleware(BaseMiddleware):
             uid = event.from_user.id
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
+            # Обновляем активность
             cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now_str, uid))
             conn.commit()
             conn.close()
         return await handler(event, data)
 
-# 3. ТЕПЕРЬ подключаем шпиона (теперь dp уже существует, и ошибки не будет)
 dp.message.middleware(ActivityMiddleware())
 
 # --- ФУНКЦИИ ---
-
 def fmt(num):
     return f"{int(num):,}".replace(",", " ")
 
@@ -48,20 +48,17 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute('''CREATE TABLE IF NOT EXISTS users 
-                   (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, last_bonus TEXT, name TEXT)''')
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN name TEXT")
-    except: pass
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN last_active TEXT")
-    except: pass
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN last_steal TEXT")
-    except: pass
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN shame_mark TEXT")
-    except: pass
+                   (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
+                    last_bonus TEXT, name TEXT, last_active TEXT, 
+                    last_steal TEXT, shame_mark TEXT)''')
     
+    # Безопасное добавление колонок, если база уже была создана старой версией
+    cols = ["name", "last_active", "last_steal", "shame_mark"]
+    for col in cols:
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+        except: pass
+        
     cur.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
     conn.commit()
     conn.close()
@@ -93,6 +90,7 @@ class GameStates(StatesGroup):
     guessing = State()
 
 pending_bets = {}
+pending_duels = {}
 
 # --- КЛАВИАТУРЫ ---
 def get_main_kb(chat_type):
@@ -106,11 +104,8 @@ def get_main_kb(chat_type):
         [KeyboardButton(text="📊 Ставки"), KeyboardButton(text="🚫 Отмена")]
     ], resize_keyboard=True)
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-logging.basicConfig(level=logging.INFO)
-
 # --- КОМАНДЫ ---
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     get_user(message.from_user.id, message.from_user.full_name)
@@ -120,25 +115,20 @@ async def cmd_start(message: Message):
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
     uid = message.from_user.id
-    # Получаем базовые данные (баланс создастся, если юзера не было)
     get_user(uid, message.from_user.full_name) 
     
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
     cur.execute("SELECT balance, shame_mark FROM users WHERE id = ?", (uid,))
-    res = cur.fetchone()
-    conn.close()
+    res = cur.fetchone(); conn.close()
     
-    balance = res[0]
-    shame_str = res[1]
-    
+    balance, shame_str = res
     status = "🟢 Обычный гражданин"
+    
     if shame_str:
         shame_time = datetime.fromisoformat(shame_str)
         if datetime.now() < shame_time:
-            # Считаем, сколько осталось носить клеймо
             left = shame_time - datetime.now()
-            m, _ = divmod(left.seconds, 60)
+            m = (left.seconds // 60) + 1
             status = f"🤡 Неудачливый воришка (еще {m} мин.)"
 
     await message.answer(f"👤 **Профиль:** {message.from_user.first_name}\n💰 **Баланс:** {fmt(balance)} Угадаек\n📝 **Статус:** {status}", parse_mode="Markdown")
@@ -161,18 +151,17 @@ async def transfer(message: Message):
 
 @dp.message(F.text == "🎁 Бонус")
 async def get_bonus(message: Message):
-    # Тут важно передать full_name
     res = get_user(message.from_user.id, message.from_user.full_name)
     balance, last_bonus_str = res
-    
     now = datetime.now()
+    
     if last_bonus_str:
         last_b = datetime.fromisoformat(last_bonus_str)
         if now - last_b < timedelta(hours=24):
             left = timedelta(hours=24) - (now - last_b)
-            hours, remainder = divmod(left.seconds, 3600)
-            minutes, _ = divmod(remainder, 60)
-            return await message.answer(f"⏳ Бонус уже получен!\nВозвращайся через **{hours} ч. {minutes} мин.**")
+            h, rem = divmod(left.seconds, 3600)
+            m, _ = divmod(rem, 60)
+            return await message.answer(f"⏳ Бонус уже получен!\nВозвращайся через **{h} ч. {m} мин.**")
 
     bonus_amount = random.randint(100, 5000)
     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
@@ -182,13 +171,12 @@ async def get_bonus(message: Message):
     await message.answer(f"🎁 Ты получил бонус: **{fmt(bonus_amount)}** Угадаек!")
 
 @dp.message(F.text == "🏆 Рейтинг")
-@dp.message(F.text.lower == "/top")
+@dp.message(F.text.lower() == "/top")
 async def show_rating(message: Message):
     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
     cur.execute("SELECT name, balance, id FROM users ORDER BY balance DESC LIMIT 10")
     top_users = cur.fetchall(); conn.close()
-    if not top_users: return await message.answer("Рейтинг пока пуст.")
-
+    
     text = "🏆 <b>ТОП-10 БОГАЧЕЙ:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, bal, uid) in enumerate(top_users):
@@ -196,6 +184,11 @@ async def show_rating(message: Message):
         display_name = name if name else "Игрок"
         text += f"{medal} <a href='tg://user?id={uid}'>{display_name}</a> — <b>{fmt(bal)}</b>\n"
     await message.answer(text, parse_mode="HTML")
+
+# --- ЛОГИКА РУЛЕТКИ, ДУЭЛЕЙ И ВОРОВСТВА ОСТАЕТСЯ КАК В ТВОЕМ КОДЕ ---
+# (Я проверил, там всё ок, главное - не дублируй bot/dp!)
+
+
 
 @dp.message(F.text == "📊 Ставки")
 async def show_my_bets(message: Message):
@@ -634,6 +627,9 @@ async def admin_power(message: Message):
 async def main():
     init_db()
     await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
