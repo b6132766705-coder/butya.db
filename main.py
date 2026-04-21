@@ -17,14 +17,16 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1316137517 
 DB_PATH = "/app/data/butya.db"
 
-# --- ШПИОН АКТИВНОСТИ ---
+# 1. СНАЧАЛА создаем объекты бота и диспетчера
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+
+# 2. ОПРЕДЕЛЯЕМ класс шпиона
 class ActivityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        # Если это текстовое сообщение от реального пользователя
         if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
             now_str = datetime.now().isoformat()
             uid = event.from_user.id
-            # Обновляем время активности в фоне
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now_str, uid))
@@ -32,14 +34,14 @@ class ActivityMiddleware(BaseMiddleware):
             conn.close()
         return await handler(event, data)
 
-# Подключаем шпиона к боту
+# 3. ТЕПЕРЬ подключаем шпиона (теперь dp уже существует, и ошибки не будет)
 dp.message.middleware(ActivityMiddleware())
 
-# --- ФУНКЦИЯ ДЛЯ КРАСИВЫХ ЧИСЕЛ ---
+# --- ФУНКЦИИ ---
+
 def fmt(num):
     return f"{int(num):,}".replace(",", " ")
 
-# --- БАЗА ДАННЫХ ---
 def init_db():
     if not os.path.exists("/app/data"):
         os.makedirs("/app/data")
@@ -51,13 +53,13 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN name TEXT")
     except: pass
     try:
-        cur.execute("ALTER TABLE users ADD COLUMN last_active TEXT") # Дата последнего сообщения
+        cur.execute("ALTER TABLE users ADD COLUMN last_active TEXT")
     except: pass
     try:
-        cur.execute("ALTER TABLE users ADD COLUMN last_steal TEXT") # Кулдаун на воровство
+        cur.execute("ALTER TABLE users ADD COLUMN last_steal TEXT")
     except: pass
     try:
-        cur.execute("ALTER TABLE users ADD COLUMN shame_mark TEXT") # Клеймо позора
+        cur.execute("ALTER TABLE users ADD COLUMN shame_mark TEXT")
     except: pass
     
     cur.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
