@@ -173,6 +173,39 @@ async def cancel_my_bets(message: Message):
             return await message.answer(f"✅ Ставки отменены. Возвращено: {fmt(refund)}")
     await message.answer("У тебя нет активных Ставок")
 
+#--------угадай ячисло---------
+# --- МИНИ-ИГРА: УГАДАЙ ЧИСЛО ---
+@dp.message(F.text == "🎮 Играть")
+async def start_guess(message: Message, state: FSMContext):
+    # Эта игра доступна везде, но если хочешь только в личке - можно добавить проверку
+    num = random.randint(1, 10)
+    await state.set_state(GameStates.guessing)
+    await state.update_data(target=num, attempts=3)
+    await message.answer("Я загадал число от 1 до 10. У тебя 3 попытки! Пиши число:")
+
+@dp.message(GameStates.guessing)
+async def process_guess(message: Message, state: FSMContext):
+    if not message.text.isdigit(): 
+        return await message.answer("Пожалуйста, введи только цифры!")
+        
+    guess = int(message.text)
+    data = await state.get_data()
+    target = data['target']
+    attempts = data['attempts'] - 1
+
+    if guess == target:
+        update_balance(message.from_user.id, 50)
+        await message.answer(f"🎉 Угадал! +{fmt(50)} Угадаек.", reply_markup=get_main_kb(message.chat.type))
+        await state.clear()
+    elif attempts > 0:
+        hint = "Больше!" if target > guess else "Меньше!"
+        await state.update_data(attempts=attempts)
+        await message.answer(f"Неверно. {hint} Осталось попыток: {attempts}")
+    else:
+        await message.answer(f"Попытки кончились! Это было {target}.", reply_markup=get_main_kb(message.chat.type))
+        await state.clear()
+
+
 #--------Рулетка-------
 @dp.message(lambda m: m.text and (m.text.split()[0].isdigit() or m.text.lower().startswith("все") or m.text.lower().startswith("всё")))
 async def take_bet(message: Message):
