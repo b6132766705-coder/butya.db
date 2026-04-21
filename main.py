@@ -624,6 +624,25 @@ async def admin_power(message: Message):
             await message.answer(f"👑 Изменено на {fmt(val)}")
         except: pass
 
+# --- АДМИН-ЧИТ: ОБНУЛЕНИЕ ТАЙМЕРОВ ---
+@dp.message(F.text.lower() == "обнулить", F.reply_to_message, lambda m: m.from_user.id == ADMIN_ID)
+async def admin_reset(message: Message):
+    victim = message.reply_to_message.from_user
+    
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    # Стираем все временные метки
+    cur.execute("""UPDATE users SET 
+                   last_steal = NULL, 
+                   shame_mark = NULL, 
+                   last_bonus = NULL 
+                   WHERE id = ?""", (victim.id,))
+    conn.commit()
+    conn.close()
+    
+    await message.answer(f"🪄 **Магия админа!**\nДля {victim.first_name} все таймеры обнулены. Можно снова воровать и брать бонусы! 🚀")
+
+
 async def main():
     init_db()
     await dp.start_polling(bot)
