@@ -631,7 +631,6 @@ async def admin_reset(message: Message):
     
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    # Стираем все временные метки
     cur.execute("""UPDATE users SET 
                    last_steal = NULL, 
                    shame_mark = NULL, 
@@ -640,15 +639,15 @@ async def admin_reset(message: Message):
     conn.commit()
     conn.close()
     
-    await message.answer(f"🪄 **Магия админа!**\nДля {victim.first_name} все таймеры обнулены. Можно снова воровать и брать бонусы! 🚀")
+    await message.answer(f"🪄 **Магия админа!**\nДля {victim.first_name} все таймеры обнулены.")
 
-
+# --- ЗАПУСК ---
 async def main():
     init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот выключен")
