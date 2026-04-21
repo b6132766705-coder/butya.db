@@ -369,6 +369,107 @@ async def show_log(message: Message):
         out += f"{i}. 🎰 {col} {n}\n"
     await message.answer(out)
 
+# Память для активных дуэлей (вставь в начало кода, где все переменные)
+pending_duels = {}
+
+# --- ИГРА: ДУЭЛЬ / ДУЕЛЬ ---
+@dp.message(F.text.lower().startswith("дуэль ") | F.text.lower().startswith("дуель "), F.reply_to_message)
+async def start_duel(message: Message):
+    if message.chat.type == "private":
+        return await message.answer("❌ Дуэли возможны только в группах!")
+
+    try:
+        parts = message.text.split()
+        if len(parts) < 2: return
+        
+        amount = int(parts[1])
+        if amount <= 0: return
+        
+        challenger = message.from_user 
+        victim = message.reply_to_message.from_user 
+        
+        if challenger.id == victim.id:
+            return await message.answer("🤔 Самострел запрещен! Выбери другого оппонента.")
+        if victim.is_bot:
+            return await message.answer("🤖 Боты бессмертны, с ними нет смысла стреляться.")
+
+        # Проверка баланса
+        c_bal, _ = get_user(challenger.id, challenger.full_name)
+        v_bal, _ = get_user(victim.id, victim.full_name)
+
+        if c_bal < amount:
+            return await message.answer(f"❌ У тебя не хватает {fmt(amount)} Угадаек!")
+        if v_bal < amount:
+            return await message.answer(f"❌ У {victim.first_name} маловато денег для такой дуэли.")
+
+        # Сохраняем вызов
+        cid = message.chat.id
+        if cid not in pending_duels:
+            pending_duels[cid] = {}
+            
+        pending_duels[cid][victim.id] = {
+            "challenger_id": challenger.id,
+            "challenger_name": challenger.first_name,
+            "amount": amount
+        }
+
+        kb = ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="🤝 Принять дуэль")]
+        ], resize_keyboard=True, one_time_keyboard=True)
+
+        await message.answer(
+            f"🔫 <b>{challenger.first_name}</b> вызывает на дуэль <b>{victim.first_name}</b>!\n"
+            f"💰 Ставка: <b>{fmt(amount)}</b> Угадаек.\n\n"
+            f"<i>{victim.first_name}, ты принимаешь вызов?</i>",
+            reply_markup=kb, parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Ошибка дуэли: {e}")
+
+@dp.message(F.text == "🤝 Принять дуэль")
+async def accept_duel(message: Message):
+    if message.chat.type == "private": return
+    
+    cid = message.chat.id
+    vid = message.from_user.id 
+    
+    if cid not in pending_duels or vid not in pending_duels[cid]:
+        return # Нажал кто-то левый или дуэли нет
+        
+    duel = pending_duels[cid].pop(vid) 
+    amount = duel["amount"]
+    cid_challenger = duel["challenger_id"]
+    c_name = duel["challenger_name"]
+    v_name = message.from_user.first_name
+    
+    c_bal, _ = get_user(cid_challenger, c_name)
+    v_bal, _ = get_user(vid, v_name)
+    
+    if c_bal < amount or v_bal < amount:
+        return await message.answer("❌ Дуэль сорвалась: у кого-то закончились деньги!", reply_markup=get_main_kb(message.chat.type))
+        
+    # Списание ставок
+    update_balance(cid_challenger, -amount)
+    update_balance(vid, -amount)
+    
+    # Случайный победитель
+    winner_is_challenger = random.choice([True, False])
+    total_win = amount * 2
+    
+    if winner_is_challenger:
+        update_balance(cid_challenger, total_win)
+        winner_name, loser_name = c_name, v_name
+    else:
+        update_balance(vid, total_win)
+        winner_name, loser_name = v_name, c_name
+
+    await message.answer(
+        f"💥 ПАХ!\n\n🏆 <b>{winner_name}</b> оказался быстрее и застрелил <b>{loser_name}</b>!\n"
+        f"💰 Весь банк в размере <b>{fmt(total_win)}</b> Угадаек уходит победителю!",
+        parse_mode="HTML", reply_markup=get_main_kb(message.chat.type)
+    )
+
+
 
 #-----Админ-------
 @dp.message(F.reply_to_message, lambda m: m.from_user.id == ADMIN_ID)
