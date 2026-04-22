@@ -62,28 +62,23 @@ async def init_db():
                             balance INTEGER DEFAULT 0)''')
         
         # Безопасное добавление колонок
-        cols = ["name", "last_active", "last_steal", "shame_mark", "clan_id"] # Добавили clan_id
+        cols = ["name", "last_active", "last_steal", "shame_mark", "clan_id"] 
         for col in cols:
             try:
                 await db.execute(f"ALTER TABLE users ADD COLUMN {col} {'INTEGER' if col == 'clan_id' else 'TEXT'}")
             except: pass
             
+        # Таблица истории рулетки
         await db.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
-        await db.commit()
-
-    # ... твой старый код создания таблиц ...
-    async with aiosqlite.connect(DB_PATH) as db:
+        
         # Таблица инвентаря
         await db.execute('''CREATE TABLE IF NOT EXISTS inventory 
                            (user_id INTEGER, 
                             item_name TEXT, 
                             amount INTEGER DEFAULT 1,
                             PRIMARY KEY (user_id, item_name))''')
-        await db.commit()
-
         
-def fmt(amount):
-    return "{:,}".format(amount).replace(",", " ")
+        await db.commit()
 
 
 async def get_user(user_id, name):
