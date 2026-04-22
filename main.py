@@ -868,75 +868,80 @@ async def accept_duel(message: Message):
 @dp.message(F.text.lower() == "украсть", F.reply_to_message)
 async def steal_money(message: Message):
     stealer_id = message.from_user.id
-    stealer_name = message.from_user.first_name
     victim_id = message.reply_to_message.from_user.id
-    victim_name = message.reply_to_message.from_user.first_name
-    
+    now = datetime.now()
+
     if stealer_id == victim_id:
-        return await message.answer("🤔 Решил обчистить собственные карманы? Оригинально, но нет.")
+        return await message.answer("🤔 Грабить самого себя — это путь в никуда.")
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # 1. Проверка щита (оставляем, это важная механика)
-        async with db.execute("SELECT amount FROM inventory WHERE user_id = ? AND item_name = 'Щит'", (victim_id,)) as cur:
-            shield_row = await cur.fetchone()
+        # 1. Проверка кулдауна вора (не клеймен ли он или не в тайм-ауте)
+        async with db.execute("SELECT shame_mark, balance FROM users WHERE id = ?", (stealer_id,)) as cur:
+            stealer_data = await cur.fetchone()
+            shame_str, stealer_bal = stealer_data if stealer_data else (None, 0)
         
-        if shield_row and shield_row[0] > 0:
-            await db.execute("UPDATE inventory SET amount = amount - 1 WHERE user_id = ? AND item_name = 'Щит'", (victim_id,))
-            await db.commit()
-            return await message.answer(
-                f"🛡 <b>Система безопасности!</b>\n\n"
-                f"У {victim_name} сработал <b>Щит</b>. {stealer_name}, тебя чуть не ударило током! Попытка провалена.",
-                parse_mode="HTML"
-            )
+        if shame_str:
+            shame_time = datetime.fromisoformat(shame_str)
+            if now < shame_time:
+                diff = shame_time - now
+                mins = (diff.seconds // 60) + 1
+                return await message.answer(f"🚫 <b>Ты в розыске!</b>\nПосле прошлой неудачи ты залег на дно. Подожди еще {mins} мин.")
 
-        # 2. Проверка баланса жертвы
-        async with db.execute("SELECT balance FROM users WHERE id = ?", (victim_id,)) as cur:
-            v_row = await cur.fetchone()
-            victim_bal = v_row[0] if v_row else 0
+        # 2. Получаем данные жертвы (баланс и время последней активности)
+        async with db.execute("SELECT balance, last_active FROM users WHERE id = ?", (victim_id,)) as cur:
+            victim_data = await cur.fetchone()
+            if not victim_data: return
+            victim_bal, last_active_str = victim_data
 
-        if victim_bal < 2000:
-            return await message.answer(f"📦 У {victim_name} в карманах только фантики. Грабить тут нечего.")
+        if victim_bal < 1000:
+            return await message.answer("📦 У жертвы слишком пустые карманы.")
 
-        # 3. Шанс успеха
-        chance = random.randint(1, 100)
+        # 3. Расчет шанса в зависимости от активности
+        # По умолчанию шанс 25% (если жертва активна)
+        chance = 25 
+        activity_text = "жертва очень бдительна"
+
+        if last_active_str:
+            last_active = datetime.fromisoformat(last_active_str)
+            idle_time = (now - last_active).total_seconds() / 60 # в минутах
+
+            if idle_time > 30: # Если не писал более 30 минут
+                chance = 70
+                activity_text = "жертва крепко спит"
+            elif idle_time > 10: # Если не писал более 10 минут
+                chance = 45
+                activity_text = "жертва отвлеклась"
+
+        # 4. Попытка ограбления
+        roll = random.randint(1, 100)
         
-        if chance <= 30:  # Успех (30%)
-            steal_percent = random.uniform(0.15, 0.4) # Крадем от 15% до 40%
-            steal_amount = int(victim_bal * steal_percent)
-            
+        if roll <= chance:
+            # УСПЕХ
+            steal_amount = int(victim_bal * random.uniform(0.1, 0.25))
             await db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (steal_amount, victim_id))
             await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (steal_amount, stealer_id))
             await db.commit()
             
             await message.answer(
-                f"🥷 <b>Чистая работа!</b>\n\n"
-                f"Игрок <b>{stealer_name}</b> виртуозно обчистил счета {victim_name}.\n"
-                f"💸 Теневой доход составил: <b>{fmt(steal_amount)}</b> Угадаек!",
+                f"🥷 <b>Удачный налет!</b> ({activity_text})\n"
+                f"Ты вытащил из кошелька {message.reply_to_message.from_user.first_name} <b>{fmt(steal_amount)}</b> Угадаек!",
                 parse_mode="HTML"
             )
+        else:
+            # ПРОВАЛ
+            penalty = 5000
+            shame_until = (now + timedelta(hours=3)).isoformat() # Клеймо на 3 часа
             
-        elif chance <= 60: # Неудача: Штраф от полиции (30%)
-            penalty = int(victim_bal * 0.1) # Штраф 10% от денег жертвы (но платит вор)
-            await db.execute("UPDATE users SET balance = MAX(0, balance - ?) WHERE id = ?", (penalty, stealer_id))
+            await db.execute("UPDATE users SET balance = MAX(0, balance - ?), shame_mark = ? WHERE id = ?", 
+                           (penalty, shame_until, stealer_id))
             await db.commit()
             
             await message.answer(
-                f"🚨 <b>Облава!</b>\n\n"
-                f"{stealer_name}, тебя засекли камеры! Пришлось дать взятку полиции в размере <b>{fmt(penalty)}</b>, чтобы не сесть.",
+                f"🚨 <b>ТЕБЯ ПОЙМАЛИ!</b>\n\n"
+                f"Жертва оказалась хитрее. Ты оштрафован на <b>{fmt(penalty)}</b> Угадаек и объявлен в розыск на <b>3 часа</b> 🤡.",
                 parse_mode="HTML"
             )
-            
-        else: # Худший исход: Клеймо позора (40%)
-            shame_until = (datetime.now() + timedelta(hours=2)).isoformat()
-            await db.execute("UPDATE users SET shame_mark = ? WHERE id = ?", (shame_until, stealer_id))
-            await db.commit()
-            
-            await message.answer(
-                f"📸 <b>Лицо крупным планом!</b>\n\n"
-                f"Попытка кражи провалена. Фото <b>{stealer_name}</b> теперь висит на доске позора во всех казино! "
-                f"На ближайшие 2 часа ты — <b>Клоун</b> 🤡.",
-                parse_mode="HTML"
-            )
+
 
 
 # --- АДМИН-ЧИТ: ОБНУЛЕНИЕ ТАЙМЕРОВ ---
