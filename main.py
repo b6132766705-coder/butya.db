@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 import random
-import sqlite3
+import aiosqlite
 from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F, types
@@ -17,12 +17,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1316137517
 DB_PATH = "/app/data/butya.db"
 
-# 1. Инициализация (Только один раз!)
+# 1. Инициализация
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# 2. ШПИОН АКТИВНОСТИ
+# 2. ШПИОН АКТИВНОСТИ (Асинхронный)
 class ActivityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
@@ -30,16 +30,13 @@ class ActivityMiddleware(BaseMiddleware):
             name = event.from_user.full_name
             now_str = datetime.now().isoformat()
             
-            # Сразу гарантируем, что юзер есть в базе и обновляем его активность
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO users (id, name, last_active, balance) 
-                VALUES (?, ?, ?, 10000) 
-                ON CONFLICT(id) DO UPDATE SET last_active = ?, name = ?
-            """, (uid, name, now_str, now_str, name))
-            conn.commit()
-            conn.close()
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO users (id, name, last_active, balance) 
+                    VALUES (?, ?, ?, 10000) 
+                    ON CONFLICT(id) DO UPDATE SET last_active = ?, name = ?
+                """, (uid, name, now_str, now_str, name))
+                await db.commit()
             
         return await handler(event, data)
 
@@ -49,48 +46,43 @@ dp.message.middleware(ActivityMiddleware())
 def fmt(num):
     return f"{int(num):,}".replace(",", " ")
 
-def init_db():
+async def init_db():
     if not os.path.exists("/app/data"):
-        os.makedirs("/app/data")
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute('''CREATE TABLE IF NOT EXISTS users 
-                   (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
-                    last_bonus TEXT, name TEXT, last_active TEXT, 
-                    last_steal TEXT, shame_mark TEXT)''')
+        os.makedirs("/app/data", exist_ok=True)
     
-    # Безопасное добавление колонок, если база уже была создана старой версией
-    cols = ["name", "last_active", "last_steal", "shame_mark"]
-    for col in cols:
-        try:
-            cur.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
-        except: pass
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''CREATE TABLE IF NOT EXISTS users 
+                       (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
+                        last_bonus TEXT, name TEXT, last_active TEXT, 
+                        last_steal TEXT, shame_mark TEXT)''')
         
-    cur.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
-    conn.commit()
-    conn.close()
+        cols = ["name", "last_active", "last_steal", "shame_mark"]
+        for col in cols:
+            try:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+            except: pass
+            
+        await db.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
+        await db.commit()
 
-def get_user(user_id, name):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT balance, last_bonus FROM users WHERE id = ?", (user_id,))
-    res = cur.fetchone()
-    if not res:
-        cur.execute("INSERT INTO users (id, balance, name) VALUES (?, ?, ?)", (user_id, 10000, name))
-        conn.commit()
-        res = (10000, None)
-    else:
-        cur.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
-        conn.commit()
-    conn.close()
-    return res
+async def get_user(user_id, name):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT balance, last_bonus FROM users WHERE id = ?", (user_id,)) as cursor:
+            res = await cursor.fetchone()
+            
+        if not res:
+            await db.execute("INSERT INTO users (id, balance, name) VALUES (?, ?, ?)", (user_id, 10000, name))
+            await db.commit()
+            return (10000, None)
+        else:
+            await db.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
+            await db.commit()
+            return res
 
-def update_balance(user_id, amount):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (int(amount), user_id))
-    conn.commit()
-    conn.close()
+async def update_balance(user_id, amount):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (int(amount), user_id))
+        await db.commit()
 
 # --- СОСТОЯНИЯ ---
 class GameStates(StatesGroup):
@@ -115,18 +107,18 @@ def get_main_kb(chat_type):
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    get_user(message.from_user.id, message.from_user.full_name)
+    await get_user(message.from_user.id, message.from_user.full_name)
     await message.answer(f"Привет! Я Бутя. Даю {fmt(10000)} Угадаек!", reply_markup=get_main_kb(message.chat.type))
 
 @dp.message(F.text == "👤 Профиль")
 @dp.message(F.text.lower() == "б")
 async def show_profile(message: Message):
     uid = message.from_user.id
-    get_user(uid, message.from_user.full_name) 
+    await get_user(uid, message.from_user.full_name) 
     
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT balance, shame_mark FROM users WHERE id = ?", (uid,))
-    res = cur.fetchone(); conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT balance, shame_mark FROM users WHERE id = ?", (uid,)) as cursor:
+            res = await cursor.fetchone()
     
     balance, shame_str = res
     status = "🟢 Обычный гражданин"
@@ -148,17 +140,19 @@ async def transfer(message: Message):
         receiver = message.reply_to_message.from_user
         if amount <= 0 or sender_id == receiver.id: return
         
-        bal, _ = get_user(sender_id, message.from_user.full_name)
+        res = await get_user(sender_id, message.from_user.full_name)
+        bal = res[0]
+        
         if bal < amount: return await message.answer("❌ Недостаточно Угадаек!")
         
-        update_balance(sender_id, -amount)
-        update_balance(receiver.id, amount)
+        await update_balance(sender_id, -amount)
+        await update_balance(receiver.id, amount)
         await message.answer(f"✅ Переведено {fmt(amount)} Угадаек для {receiver.first_name}")
     except: pass
 
 @dp.message(F.text == "🎁 Бонус")
 async def get_bonus(message: Message):
-    res = get_user(message.from_user.id, message.from_user.full_name)
+    res = await get_user(message.from_user.id, message.from_user.full_name)
     balance, last_bonus_str = res
     now = datetime.now()
     
@@ -171,18 +165,19 @@ async def get_bonus(message: Message):
             return await message.answer(f"⏳ Бонус уже получен!\nВозвращайся через **{h} ч. {m} мин.**")
 
     bonus_amount = random.randint(100, 5000)
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("UPDATE users SET balance = balance + ?, last_bonus = ? WHERE id = ?", 
-                (bonus_amount, now.isoformat(), message.from_user.id))
-    conn.commit(); conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET balance = balance + ?, last_bonus = ? WHERE id = ?", 
+                    (bonus_amount, now.isoformat(), message.from_user.id))
+        await db.commit()
+        
     await message.answer(f"🎁 Ты получил бонус: **{fmt(bonus_amount)}** Угадаек!")
 
 @dp.message(F.text == "🏆 Рейтинг")
 @dp.message(F.text.lower() == "/top")
 async def show_rating(message: Message):
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT name, balance, id FROM users ORDER BY balance DESC LIMIT 10")
-    top_users = cur.fetchall(); conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name, balance, id FROM users ORDER BY balance DESC LIMIT 10") as cursor:
+            top_users = await cursor.fetchall()
     
     text = "🏆 <b>ТОП-10 БОГАЧЕЙ:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
@@ -191,11 +186,6 @@ async def show_rating(message: Message):
         display_name = name if name else "Игрок"
         text += f"{medal} <a href='tg://user?id={uid}'>{display_name}</a> — <b>{fmt(bal)}</b>\n"
     await message.answer(text, parse_mode="HTML")
-
-# --- ЛОГИКА РУЛЕТКИ, ДУЭЛЕЙ И ВОРОВСТВА ОСТАЕТСЯ КАК В ТВОЕМ КОДЕ ---
-# (Я проверил, там всё ок, главное - не дублируй bot/dp!)
-
-
 
 @dp.message(F.text == "📊 Ставки")
 async def show_my_bets(message: Message):
@@ -220,15 +210,13 @@ async def cancel_my_bets(message: Message):
         if user_bets:
             refund = sum(b['amount'] * len(b['targets']) for b in user_bets)
             pending_bets[cid] = [b for b in pending_bets[cid] if b['user_id'] != uid]
-            update_balance(uid, refund)
+            await update_balance(uid, refund)
             return await message.answer(f"✅ Ставки отменены. Возвращено: {fmt(refund)}")
     await message.answer("У тебя нет активных Ставок")
 
-#--------угадай ячисло---------
 # --- МИНИ-ИГРА: УГАДАЙ ЧИСЛО ---
 @dp.message(F.text == "🎮 Играть")
 async def start_guess(message: Message, state: FSMContext):
-    # Эта игра доступна везде, но если хочешь только в личке - можно добавить проверку
     num = random.randint(1, 10)
     await state.set_state(GameStates.guessing)
     await state.update_data(target=num, attempts=3)
@@ -245,7 +233,7 @@ async def process_guess(message: Message, state: FSMContext):
     attempts = data['attempts'] - 1
 
     if guess == target:
-        update_balance(message.from_user.id, 50)
+        await update_balance(message.from_user.id, 50)
         await message.answer(f"🎉 Угадал! +{fmt(50)} Угадаек.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
     elif attempts > 0:
@@ -257,7 +245,7 @@ async def process_guess(message: Message, state: FSMContext):
         await state.clear()
 
 
-#--------Рулетка-------
+# --- РУЛЕТКА ---
 @dp.message(lambda m: m.text and (m.text.split()[0].isdigit() or m.text.lower().startswith("все") or m.text.lower().startswith("всё")))
 async def take_bet(message: Message):
     if message.chat.type == "private":
@@ -267,19 +255,15 @@ async def take_bet(message: Message):
         return 
 
     try:
-        # === НОВАЯ ПРОВЕРКА ЦЕЛЕЙ СТАВКИ ===
         raw_targets = [t.lower() for t in parts[1:]]
         valid_targets = []
         invalid_targets = []
         
         for t in raw_targets:
-            # Проверяем цвета и чет/нечет
             if t in ["к", "кр", "красное", "ч", "чр", "черное", "чет", "нечет"]:
                 valid_targets.append(t)
-            # Проверяем конкретные числа от 0 до 36
             elif t.isdigit() and 0 <= int(t) <= 36:
                 valid_targets.append(t)
-            # Проверяем диапазоны (например, 1-12)
             elif "-" in t:
                 try:
                     low, high = map(int, t.split("-"))
@@ -292,17 +276,15 @@ async def take_bet(message: Message):
             else:
                 invalid_targets.append(t)
                 
-        # Если есть хоть одна ошибка (опечатка), отменяем ставку полностью
         if invalid_targets:
             return await message.answer(f"❌ Ошибка в купоне!\nЯ не понимаю эти ставки: **{', '.join(invalid_targets)}**\n\nРазрешены: числа (0-36), цвета (к, ч), чет/нечет и диапазоны (например 1-18).", parse_mode="Markdown")
         
-        # Если всё верно, продолжаем работу
         targets = valid_targets
         count = len(targets)
 
         uid = message.from_user.id
         user_name = message.from_user.full_name
-        res = get_user(uid, user_name)
+        res = await get_user(uid, user_name)
         bal = res[0]
         
         first_word = parts[0].lower() 
@@ -330,7 +312,7 @@ async def take_bet(message: Message):
             "targets": targets
         })
         
-        update_balance(uid, -total_needed)
+        await update_balance(uid, -total_needed)
         
         report = f"✅ Ставок принято: {count}\n"
         if first_word in ["все", "всё"]:
@@ -345,10 +327,8 @@ async def take_bet(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в ставке: {e}")
 
-
 @dp.message(F.text.lower() == "го")
 async def spin(message: Message):
-    # ПРОВЕРКА ЧАТА (Теперь с правильным отступом!)
     if message.chat.type == "private":
         return await message.answer("🎰 В рулетку можно играть только в группах! Добавь меня в чат с друзьями.")
     
@@ -357,9 +337,10 @@ async def spin(message: Message):
         return await message.answer("🎰 Ставок пока нет!")
     
     win_num = random.randint(0, 36)
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT INTO history (number) VALUES (?)", (win_num,))
-    conn.commit(); conn.close()
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO history (number) VALUES (?)", (win_num,))
+        await db.commit()
     
     col_em = "🟢" if win_num == 0 else ("🔴" if win_num % 2 == 0 else "⚫")
     col_txt = "ЗЕРО" if win_num == 0 else ("КРАСНОЕ" if win_num % 2 == 0 else "ЧЁРНОЕ")
@@ -397,20 +378,21 @@ async def spin(message: Message):
         res_text += f"👤 {data['name']}:\n" + "\n".join(data['results']) + "\n"
         prof = data['total_win'] - data['total_spent']
         res_text += f"💰 Итог: {'+' if prof >= 0 else ''}{fmt(prof)}\n\n"
-        if data['total_win'] > 0: update_balance(uid, data['total_win'])
+        if data['total_win'] > 0: 
+            await update_balance(uid, data['total_win'])
             
     pending_bets[cid] = [] 
     await message.answer(res_text)
 
 @dp.message(F.text.lower() == "лог")
 async def show_log(message: Message):
-    # ПРОВЕРКА ЧАТА
     if message.chat.type == "private":
         return await message.answer("📜 История игр доступна только в группах.")
 
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT number FROM history ORDER BY rowid DESC LIMIT 10")
-    res = cur.fetchall(); conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT number FROM history ORDER BY rowid DESC LIMIT 10") as cursor:
+            res = await cursor.fetchall()
+            
     if not res: return await message.answer("История пуста")
     
     out = "📜 История:\n\n"
@@ -420,10 +402,7 @@ async def show_log(message: Message):
         out += f"{i}. 🎰 {col} {n}\n"
     await message.answer(out)
 
-# Память для активных дуэлей (вставь в начало кода, где все переменные)
-pending_duels = {}
-
-# --- ИГРА: ДУЭЛЬ / ДУЕЛЬ ---
+# --- ИГРА: ДУЭЛЬ ---
 @dp.message(F.text.lower().startswith("дуэль ") | F.text.lower().startswith("дуель "), F.reply_to_message)
 async def start_duel(message: Message):
     if message.chat.type == "private":
@@ -444,16 +423,17 @@ async def start_duel(message: Message):
         if victim.is_bot:
             return await message.answer("🤖 Боты бессмертны, с ними нет смысла стреляться.")
 
-        # Проверка баланса
-        c_bal, _ = get_user(challenger.id, challenger.full_name)
-        v_bal, _ = get_user(victim.id, victim.full_name)
+        res_c = await get_user(challenger.id, challenger.full_name)
+        c_bal = res_c[0]
+        
+        res_v = await get_user(victim.id, victim.full_name)
+        v_bal = res_v[0]
 
         if c_bal < amount:
             return await message.answer(f"❌ У тебя не хватает {fmt(amount)} Угадаек!")
         if v_bal < amount:
             return await message.answer(f"❌ У {victim.first_name} маловато денег для такой дуэли.")
 
-        # Сохраняем вызов
         cid = message.chat.id
         if cid not in pending_duels:
             pending_duels[cid] = {}
@@ -485,7 +465,7 @@ async def accept_duel(message: Message):
     vid = message.from_user.id 
     
     if cid not in pending_duels or vid not in pending_duels[cid]:
-        return # Нажал кто-то левый или дуэли нет
+        return 
         
     duel = pending_duels[cid].pop(vid) 
     amount = duel["amount"]
@@ -493,25 +473,26 @@ async def accept_duel(message: Message):
     c_name = duel["challenger_name"]
     v_name = message.from_user.first_name
     
-    c_bal, _ = get_user(cid_challenger, c_name)
-    v_bal, _ = get_user(vid, v_name)
+    res_c = await get_user(cid_challenger, c_name)
+    c_bal = res_c[0]
+    
+    res_v = await get_user(vid, v_name)
+    v_bal = res_v[0]
     
     if c_bal < amount or v_bal < amount:
         return await message.answer("❌ Дуэль сорвалась: у кого-то закончились деньги!", reply_markup=get_main_kb(message.chat.type))
         
-    # Списание ставок
-    update_balance(cid_challenger, -amount)
-    update_balance(vid, -amount)
+    await update_balance(cid_challenger, -amount)
+    await update_balance(vid, -amount)
     
-    # Случайный победитель
     winner_is_challenger = random.choice([True, False])
     total_win = amount * 2
     
     if winner_is_challenger:
-        update_balance(cid_challenger, total_win)
+        await update_balance(cid_challenger, total_win)
         winner_name, loser_name = c_name, v_name
     else:
-        update_balance(vid, total_win)
+        await update_balance(vid, total_win)
         winner_name, loser_name = v_name, c_name
 
     await message.answer(
@@ -534,137 +515,119 @@ async def try_steal(message: Message):
     if victim.is_bot:
         return await message.answer("🤖 У ботов железные карманы, ничего не выйдет!")
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT balance, last_steal FROM users WHERE id = ?", (thief.id,)) as cur:
+            t_data = await cur.fetchone()
+            
+        if not t_data: return
+        t_bal, t_last_steal = t_data
 
-    # 1. Проверяем Вора
-    cur.execute("SELECT balance, last_steal FROM users WHERE id = ?", (thief.id,))
-    t_data = cur.fetchone()
-    if not t_data: return
-    t_bal, t_last_steal = t_data
+        now = datetime.now()
+        if t_last_steal:
+            last_s = datetime.fromisoformat(t_last_steal)
+            if now - last_s < timedelta(hours=2):
+                left = timedelta(hours=2) - (now - last_s)
+                h, rem = divmod(left.seconds, 3600)
+                m, _ = divmod(rem, 60)
+                return await message.answer(f"⏳ Полиция еще патрулирует твой район. Залечь на дно нужно еще {h} ч. {m} мин.")
 
-    now = datetime.now()
-    if t_last_steal:
-        last_s = datetime.fromisoformat(t_last_steal)
-        if now - last_s < timedelta(hours=2): # Кулдаун 2 часа
-            left = timedelta(hours=2) - (now - last_s)
-            h, rem = divmod(left.seconds, 3600)
-            m, _ = divmod(rem, 60)
-            return await message.answer(f"⏳ Полиция еще патрулирует твой район. Залечь на дно нужно еще {h} ч. {m} мин.")
+        async with db.execute("SELECT balance, last_active FROM users WHERE id = ?", (victim.id,)) as cur:
+            v_data = await cur.fetchone()
+            
+        if not v_data: return
+        v_bal, v_last_active = v_data
 
-    # 2. Проверяем Жертву
-    cur.execute("SELECT balance, last_active FROM users WHERE id = ?", (victim.id,))
-    v_data = cur.fetchone()
-    if not v_data: return
-    v_bal, v_last_active = v_data
+        if v_bal < 5000:
+            return await message.answer("❌ У этой жертвы меньше 5 000 Угадаек. Воровать у бедных — не по понятиям!")
 
-    if v_bal < 5000:
-        return await message.answer("❌ У этой жертвы меньше 5 000 Угадаек. Воровать у бедных — не по понятиям!")
+        await db.execute("UPDATE users SET last_steal = ? WHERE id = ?", (now.isoformat(), thief.id))
+        await db.commit()
 
-    # Ставим клеймо времени вору (что он уже попытался украсть)
-    cur.execute("UPDATE users SET last_steal = ? WHERE id = ?", (now.isoformat(), thief.id))
-    conn.commit()
+        if v_last_active:
+            last_a = datetime.fromisoformat(v_last_active)
+            sleep_time = now - last_a
 
-  # 3. Шанс от "Сонного охранника"
-    if v_last_active:
-        last_a = datetime.fromisoformat(v_last_active)
-        sleep_time = now - last_a
+            if sleep_time < timedelta(hours=1): chance = 10  
+            elif sleep_time < timedelta(hours=3): chance = 35 
+            elif sleep_time < timedelta(hours=6): chance = 60 
+            else: chance = 85 
+        else:
+            chance = 10
 
-        if sleep_time < timedelta(hours=1): chance = 10  # Активен
-        elif sleep_time < timedelta(hours=3): chance = 35 
-        elif sleep_time < timedelta(hours=6): chance = 60 
-        else: chance = 85 # Давно спит
-    else:
-        # Если активности нет, значит он только что зашел или база пуста
-        # Ставим 10%, чтобы не было халявного грабежа
-        chance = 10
+        success = random.randint(1, 100) <= chance
 
-    # 4. Исход кражи
-    success = random.randint(1, 100) <= chance
+        if success:
+            steal_amount = int(v_bal * 0.10)
+            await update_balance(victim.id, -steal_amount) # Исправлено на вызов функции
+            await update_balance(thief.id, steal_amount)   # Исправлено на вызов функции
+            
+            await message.answer(
+                f"🕵️ <b>ИДЕАЛЬНОЕ ОГРАБЛЕНИЕ!</b>\n\n"
+                f"Ты тихо подкрался и вытащил <b>{fmt(steal_amount)}</b> Угадаек у {victim.first_name}!\n"
+                f"<i>(Шанс успеха был: {chance}%)</i>",
+                parse_mode="HTML"
+            )
+        else:
+            fine_victim = 2000 
+            fine_police = 1000 
+            total_fine = fine_victim + fine_police
+            
+            if t_bal < total_fine:
+                total_fine = t_bal
+                fine_victim = t_bal // 2
+            
+            await update_balance(thief.id, -total_fine)   # Исправлено на вызов функции
+            await update_balance(victim.id, fine_victim)  # Исправлено на вызов функции
 
-    if success:
-        steal_amount = int(v_bal * 0.10)
-        update_balance(victim.id, -steal_amount)
-        update_balance(thief.id, steal_amount)
-        conn.close()
-        
-        await message.answer(
-            f"🕵️ <b>ИДЕАЛЬНОЕ ОГРАБЛЕНИЕ!</b>\n\n"
-            f"Ты тихо подкрался и вытащил <b>{fmt(steal_amount)}</b> Угадаек у {victim.first_name}!\n"
-            f"<i>(Шанс успеха был: {chance}%)</i>",
-            parse_mode="HTML"
-        )
-    else:
-        # Вор пойман! Расчет штрафов.
-        fine_victim = 2000 # Жертве
-        fine_police = 1000 # Полиции (просто сгорает)
-        total_fine = fine_victim + fine_police
-        
-        # Если у вора нет 3000, забираем всё, что есть
-        if t_bal < total_fine:
-            total_fine = t_bal
-            fine_victim = t_bal // 2
-        
-        update_balance(thief.id, -total_fine)
-        update_balance(victim.id, fine_victim) 
+            shame_until = (now + timedelta(hours=3)).isoformat()
+            await db.execute("UPDATE users SET shame_mark = ? WHERE id = ?", (shame_until, thief.id))
+            await db.commit()
 
-        # Вешаем клеймо позора на 3 часа
-        shame_until = (now + timedelta(hours=3)).isoformat()
-        cur.execute("UPDATE users SET shame_mark = ? WHERE id = ?", (shame_until, thief.id))
-        conn.commit()
-        conn.close()
-
-        await message.answer(
-            f"🚨 <b>ВОР ПОЙМАН ЗА РУКУ!</b>\n\n"
-            f"{victim.first_name} не спал! Охрана скрутила тебя.\n\n"
-            f"💸 Изъято: <b>{fmt(total_fine)}</b> Угадаек (из них {fmt(fine_victim)} отдано жертве).\n"
-            f"🤡 Ты получаешь статус <b>«Неудачливый воришка»</b> на 3 часа!",
-            parse_mode="HTML"
-        )
+            await message.answer(
+                f"🚨 <b>ВОР ПОЙМАН ЗА РУКУ!</b>\n\n"
+                f"{victim.first_name} не спал! Охрана скрутила тебя.\n\n"
+                f"💸 Изъято: <b>{fmt(total_fine)}</b> Угадаек (из них {fmt(fine_victim)} отдано жертве).\n"
+                f"🤡 Ты получаешь статус <b>«Неудачливый воришка»</b> на 3 часа!",
+                parse_mode="HTML"
+            )
 
 # --- АДМИН-ЧИТ: ОБНУЛЕНИЕ ТАЙМЕРОВ ---
 @dp.message(lambda m: m.text and m.text.lower().startswith("обнулить"))
 async def admin_reset(message: Message):
-    # Логируем ID, чтобы ты мог проверить его в консоли сервера
     logging.info(f"Команда 'обнулить' от ID: {message.from_user.id}")
 
-    # СТРОГАЯ ПРОВЕРКА ID (Убедись, что тут только цифры!)
-    if message.from_user.id != 1316137517:
-        return # Если это не ты, бот просто промолчит
+    if message.from_user.id != ADMIN_ID:
+        return 
 
-    # Определяем цель (на кого ответили или сам админ)
     target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("""UPDATE users SET 
-                       last_steal = NULL, 
-                       shame_mark = NULL, 
-                       last_bonus = NULL 
-                       WHERE id = ?""", (target_user.id,))
-        conn.commit()
-        conn.close()
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""UPDATE users SET 
+                           last_steal = NULL, 
+                           shame_mark = NULL, 
+                           last_bonus = NULL 
+                           WHERE id = ?""", (target_user.id,))
+            await db.commit()
         
         await message.answer(f"🪄 **Магия!** Таймеры для {target_user.first_name} сброшены.")
     except Exception as e:
         logging.error(f"Ошибка при обнулении: {e}")
         await message.answer("❌ Произошла ошибка в базе данных.")
-#-----Админ-------
+
+# --- АДМИН ---
 @dp.message(F.reply_to_message, lambda m: m.from_user.id == ADMIN_ID)
 async def admin_power(message: Message):
     if message.text.startswith(("+", "-")):
         try:
             val = int(message.text.replace(" ", ""))
-            update_balance(message.reply_to_message.from_user.id, val)
+            await update_balance(message.reply_to_message.from_user.id, val)
             await message.answer(f"👑 Изменено на {fmt(val)}")
         except: pass
 
-
-
 # --- ЗАПУСК ---
 async def main():
-    init_db()
+    await init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
