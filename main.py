@@ -272,7 +272,7 @@ async def clan_info(message: Message, state: FSMContext):
 
         if not clan_id:
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🛠 Создать клан (200 000)", callback_data="start_clan_creation")]
+                [InlineKeyboardButton(text="🛠 Создать клан (20 000)", callback_data="start_clan_creation")]
             ])
             return await message.answer(
                 "🛡 <b>Ты не состоишь в клане.</b>\nХочешь создать свой собственный?\n\nИли напиши <code>Вступить [Название]</code>, чтобы подать заявку.",
@@ -300,7 +300,7 @@ async def clan_info(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "start_clan_creation")
 async def clan_creation_start(call: CallbackQuery, state: FSMContext):
     res = await get_user(call.from_user.id, call.from_user.full_name)
-    if res[0] < 200000:
+    if res[0] < 20000:
         return await call.answer("❌ Нужно 200 000 Угадаек!", show_alert=True)
 
     await call.message.edit_text("📝 Введи название для клана (до 20 символов):")
@@ -315,7 +315,7 @@ async def process_clan_name(message: Message, state: FSMContext):
         async with db.execute("SELECT id FROM clans WHERE name = ?", (clan_name,)) as cur:
             if await cur.fetchone(): return await message.answer("❌ Название занято!")
 
-        await update_balance(uid, -200000)
+        await update_balance(uid, -20000)
         await db.execute("INSERT INTO clans (name, owner_id, balance) VALUES (?, ?, 0)", (clan_name, uid))
         async with db.execute("SELECT last_insert_rowid()") as cur:
             new_id = (await cur.fetchone())[0]
