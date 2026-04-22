@@ -43,27 +43,34 @@ class ActivityMiddleware(BaseMiddleware):
 dp.message.middleware(ActivityMiddleware())
 
 # --- ФУНКЦИИ ---
-def fmt(num):
-    return f"{int(num):,}".replace(",", " ")
-
 async def init_db():
     if not os.path.exists("/app/data"):
         os.makedirs("/app/data", exist_ok=True)
     
     async with aiosqlite.connect(DB_PATH) as db:
+        # Старая таблица пользователей
         await db.execute('''CREATE TABLE IF NOT EXISTS users 
                        (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
                         last_bonus TEXT, name TEXT, last_active TEXT, 
                         last_steal TEXT, shame_mark TEXT)''')
         
-        cols = ["name", "last_active", "last_steal", "shame_mark"]
+        # НОВАЯ ТАБЛИЦА КЛАНОВ
+        await db.execute('''CREATE TABLE IF NOT EXISTS clans 
+                           (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                            name TEXT UNIQUE, 
+                            owner_id INTEGER, 
+                            balance INTEGER DEFAULT 0)''')
+        
+        # Безопасное добавление колонок
+        cols = ["name", "last_active", "last_steal", "shame_mark", "clan_id"] # Добавили clan_id
         for col in cols:
             try:
-                await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+                await db.execute(f"ALTER TABLE users ADD COLUMN {col} {'INTEGER' if col == 'clan_id' else 'TEXT'}")
             except: pass
             
         await db.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
         await db.commit()
+
 
 async def get_user(user_id, name):
     async with aiosqlite.connect(DB_PATH) as db:
