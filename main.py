@@ -446,7 +446,7 @@ async def clan_menu(message: Message, state: FSMContext):
             
         role = "👑 Лидер" if uid == c_owner else "👤 Участник"
         
-      text = (
+        text = (
             f"🛡 <b>Клан: {c_name}</b>\n"
             f"Твоя роль: {role}\n"
             f"👥 Участников: {members_count}\n"
