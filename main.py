@@ -876,22 +876,33 @@ async def spin(message: Message):
     await message.answer(final_text, parse_mode="HTML")
 
 @dp.message(F.text.lower() == "лог")
-async def show_log(message: Message):
-    if message.chat.type == "private":
-        return await message.answer("📜 История игр доступна только в группах.")
-
+async def show_history(message: Message):
     async with aiosqlite.connect(DB_PATH) as db:
+        # Достаем 10 последних записей
         async with db.execute("SELECT number FROM history ORDER BY rowid DESC LIMIT 10") as cursor:
-            res = await cursor.fetchall()
-            
-    if not res: return await message.answer("История пуста")
-    
-    out = "📜 История:\n\n"
-    for i, row in enumerate(res, 1):
-        n = row[0]
-        col = "🟢 ЗЕРО" if n == 0 else ("🔴 КРАСНОЕ" if n % 2 == 0 else "⚫ ЧЁРНОЕ")
-        out += f"{i}. 🎰 {col} {n}\n"
-    await message.answer(out)
+            rows = await cursor.fetchall()
+
+    if not rows:
+        return await message.answer("📜 История игр пока пуста.")
+
+    red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+    history_lines = []
+
+    for i, (num,) in enumerate(rows, 1):
+        if num == 0:
+            color_circle = "🟢"
+            color_name = "ЗЕРО"
+        elif num in red_numbers:
+            color_circle = "🔴"
+            color_name = "КРАСНОЕ"
+        else:
+            color_circle = "⚫"
+            color_name = "ЧЁРНОЕ"
+        
+        history_lines.append(f"{i}. 🎰 {color_circle} {color_name} {num}")
+
+    res_text = "📜 <b>История:</b>\n\n" + "\n".join(history_lines)
+    await message.answer(res_text, parse_mode="HTML")
 
 # --- ИГРА: ДУЭЛЬ ---
 @dp.message(F.text.lower().startswith("дуэль ") | F.text.lower().startswith("дуель "), F.reply_to_message)
