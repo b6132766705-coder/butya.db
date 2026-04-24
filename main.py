@@ -561,6 +561,46 @@ async def join_request(message: Message):
         except Exception:
             await message.answer("❌ Не удалось отправить уведомление лидеру (возможно, бот у него заблокирован).")
 
+@dp.callback_query(F.data.startswith("clan_accept:"))
+async def accept_member(callback: CallbackQuery):
+    applicant_id = int(callback.data.split(":")[1])
+    leader_id = callback.from_user.id
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Узнаем ID клана лидера
+        async with db.execute("SELECT id FROM clans WHERE owner_id = ?", (leader_id,)) as cur:
+            clan_data = await cur.fetchone()
+            if not clan_data: return
+            clan_id = clan_data[0]
+
+        # Проверяем лимит еще раз (на случай, если пока лидер думал, кто-то другой зашел)
+        async with db.execute("SELECT COUNT(id) FROM users WHERE clan_id = ?", (clan_id,)) as cur:
+            if (await cur.fetchone())[0] >= 10:
+                return await callback.answer("❌ Лимит участников (10) уже исчерпан!", show_alert=True)
+
+        # Добавляем игрока в клан и удаляем заявку
+        await db.execute("UPDATE users SET clan_id = ? WHERE id = ?", (clan_id, applicant_id))
+        await db.execute("DELETE FROM clan_requests WHERE user_id = ?", (applicant_id,))
+        await db.commit()
+
+    await callback.message.edit_text("✅ Ты принял нового участника!")
+    try:
+        await bot.send_message(applicant_id, "🎉 Твоя заявка в клан была одобрена! Добро пожаловать.")
+    except: pass
+
+@dp.callback_query(F.data.startswith("clan_decline:"))
+async def decline_member(callback: CallbackQuery):
+    applicant_id = int(callback.data.split(":")[1])
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM clan_requests WHERE user_id = ?", (applicant_id,))
+        await db.commit()
+
+    await callback.message.edit_text("❌ Ты отклонил заявку.")
+    try:
+        await bot.send_message(applicant_id, "😔 Твоя заявка в клан была отклонена лидером.")
+    except: pass
+
 # --- ПОПОЛНЕНИЕ КАЗНЫ И ВЫХОД ---
 @dp.message(F.text.lower().startswith("в казну "))
 async def donate_to_clan(message: Message):
