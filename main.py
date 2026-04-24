@@ -791,10 +791,9 @@ async def spin(message: Message):
     res_num = random.randint(0, 36)
 
     # СОХРАНЯЕМ В ИСТОРИЮ
+    # Сохраняем номер в историю (добавь это в конец функции spin)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT INTO history (number) VALUES (?)", (res_num,))
-        # Опционально: удаляем очень старые записи (больше 50), чтобы база не раздувалась
-        await db.execute("DELETE FROM history WHERE rowid NOT IN (SELECT rowid FROM history ORDER BY rowid DESC LIMIT 50)")
         await db.commit()
     # Определяем цвет для заголовка
     red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
