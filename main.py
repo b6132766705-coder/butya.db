@@ -777,6 +777,7 @@ async def take_bet(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в ставке: {e}")
 
+@dp.message(F.text.lower() == "go")
 @dp.message(F.text.lower() == "го")
 async def spin(message: Message):
     if message.chat.type == "private":
@@ -784,60 +785,89 @@ async def spin(message: Message):
     
     cid = message.chat.id
     if cid not in pending_bets or not pending_bets[cid]:
-        return await message.answer("🎰 Ставок пока нет! Напишите сумму и число (например: 1000 к).")
+        return await message.answer("🎰 Ставок пока нет!")
 
-    # Крутим колесо
+    # 1. Крутим колесо
     res_num = random.randint(0, 36)
     
-    # Определяем цвет
-    red = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    res_color = "🔴 Красное" if res_num in red else "⚫ Черное"
-    if res_num == 0: res_color = "🟢 Зеро"
+    # Определяем цвет для заголовка
+    red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+    if res_num == 0:
+        header_color = "🟢 ЗЕРО"
+        res_color_key = "зеро"
+    elif res_num in red_numbers:
+        header_color = "🔴 КРАСНОЕ"
+        res_color_key = "к"
+    else:
+        header_color = "⚫ ЧЁРНОЕ"
+        res_color_key = "ч"
 
-    text = f"🎰 <b>Рулетка крутится...</b>\n\nВыпало: <b>{res_num} ({res_color})</b>\n\n"
-    results = []
+    # Заголовок сообщения
+    header_text = f"🎰 {header_color} {res_num}\n\n"
+    user_reports = []
 
+    # 2. Обрабатываем ставки каждого игрока
     for bet in pending_bets[cid]:
-        win_amount = 0
-        for target in bet['targets']:
+        uid = bet['user_id']
+        name = bet['name']
+        amount = bet['amount']
+        targets = bet['targets']
+        
+        total_won = 0
+        target_lines = []
+        
+        for t in targets:
             is_win = False
             mult = 0
             
-            # Логика выигрыша
-            if target.isdigit() and int(target) == res_num:
+            # Проверка условий победы
+            if t.isdigit() and int(t) == res_num:
                 is_win, mult = True, 36
-            elif target in ["к", "кр", "красное"] and res_num in red:
+            elif t in ["к", "кр", "красное"] and res_color_key == "к":
                 is_win, mult = True, 2
-            elif target in ["ч", "чр", "черное"] and res_num != 0 and res_num not in red:
+            elif t in ["ч", "чр", "черное"] and res_color_key == "ч":
                 is_win, mult = True, 2
-            elif target == "чет" and res_num != 0 and res_num % 2 == 0:
+            elif t == "чет" and res_num != 0 and res_num % 2 == 0:
                 is_win, mult = True, 2
-            elif target == "нечет" and res_num % 2 != 0:
+            elif t == "нечет" and res_num % 2 != 0:
                 is_win, mult = True, 2
+            # Диапазоны (например 1-18)
+            elif "-" in t:
+                low, high = map(int, t.split("-"))
+                if low <= res_num <= high:
+                    is_win, mult = True, 2 # Или другой множитель по вкусу
 
             if is_win:
-                win_amount += bet['amount'] * mult
+                current_win = amount * mult
+                total_won += current_win
+                target_lines.append(f"✅ {fmt(amount)} ➔ {t}")
+            else:
+                target_lines.append(f"❌ {fmt(amount)} ➔ {t}")
 
-        if win_amount > 0:
-            await update_balance(bet['user_id'], win_amount)
-            results.append(f"✅ {bet['name']} выиграл <b>{fmt(win_amount)}</b>")
-        else:
-            results.append(f"❌ {bet['name']} проиграл")
+        # Рассчитываем чистый итог
+        total_spent = amount * len(targets)
+        profit_loss = total_won - total_spent
+        
+        # Добавляем выигрыш на баланс (если он есть)
+        if total_won > 0:
+            await update_balance(uid, total_won)
 
-    text += "\n".join(results)
-    pending_bets[cid] = [] # Очищаем ставки после игры
-    await message.answer(text, parse_mode="HTML")
+        # Формируем блок игрока
+        user_block = f"👤 {name}:\n" + "\n".join(target_lines)
+        
+        # Красиво оформляем строку итога
+        sign = "+" if profit_loss > 0 else ""
+        user_block += f"\n💰 Итог: {sign}{fmt(profit_loss)}"
+        
+        user_reports.append(user_block)
 
-    for u_id, data in users_results.items():
-        res_text += f"👤 {data['name']}:\n" + "\n".join(data['results']) + "\n"
-        prof = data['total_win'] - data['total_spent']
-        res_text += f"💰 Итог: {'+' if prof >= 0 else ''}{fmt(prof)}\n\n"
-        if data['total_win'] > 0: 
-            await update_balance(u_id, data['total_win'])
-            
-    pending_bets[cid] = [] 
-    await message.answer(res_text)
-
+    # 3. Собираем всё сообщение и отправляем
+    final_text = header_text + "\n\n".join(user_reports)
+    
+    # Очищаем ставки для этого чата
+    pending_bets[cid] = []
+    
+    await message.answer(final_text, parse_mode="HTML")
 
 @dp.message(F.text.lower() == "лог")
 async def show_log(message: Message):
