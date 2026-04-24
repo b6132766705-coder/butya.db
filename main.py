@@ -29,37 +29,28 @@ async def init_db():
         os.makedirs("/app/data", exist_ok=True)
     
     async with aiosqlite.connect(DB_PATH) as db:
-        # Старая таблица пользователей
+        # Пользователи
         await db.execute('''CREATE TABLE IF NOT EXISTS users 
-                       (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
-                        last_bonus TEXT, name TEXT, last_active TEXT, 
-                        last_steal TEXT, shame_mark TEXT)''')
+                           (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 10000, 
+                            last_bonus TEXT, name TEXT, last_active TEXT, 
+                            last_steal TEXT, shame_mark TEXT, clan_id INTEGER)''')
         
-        # НОВАЯ ТАБЛИЦА КЛАНОВ
-      async with db.execute("""
-    CREATE TABLE IF NOT EXISTS clan_requests (
-        user_id INTEGER,
-        clan_id INTEGER,
-        PRIMARY KEY (user_id, clan_id)
-    )
-"""):
-    pass
+        # ТАБЛИЦА КЛАНОВ (Её не хватало!)
+        await db.execute('''CREATE TABLE IF NOT EXISTS clans
+                           (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                            name TEXT UNIQUE, 
+                            owner_id INTEGER, 
+                            balance INTEGER DEFAULT 0)''')
         
-        # Безопасное добавление колонок
-        cols = ["name", "last_active", "last_steal", "shame_mark", "clan_id"] 
-        for col in cols:
-            try:
-                await db.execute(f"ALTER TABLE users ADD COLUMN {col} {'INTEGER' if col == 'clan_id' else 'TEXT'}")
-            except: pass
-            
-        # Таблица истории рулетки
+        # Таблица заявок
+        await db.execute('''CREATE TABLE IF NOT EXISTS clan_requests 
+                           (user_id INTEGER, clan_id INTEGER, 
+                            PRIMARY KEY (user_id, clan_id))''')
+        
+        # История и инвентарь
         await db.execute('''CREATE TABLE IF NOT EXISTS history (number INTEGER)''')
-        
-        # Таблица инвентаря
         await db.execute('''CREATE TABLE IF NOT EXISTS inventory 
-                           (user_id INTEGER, 
-                            item_name TEXT, 
-                            amount INTEGER DEFAULT 1,
+                           (user_id INTEGER, item_name TEXT, amount INTEGER DEFAULT 1,
                             PRIMARY KEY (user_id, item_name))''')
         
         await db.commit()
