@@ -404,53 +404,65 @@ async def process_guess(message: Message, state: FSMContext):
 #-------------------------------------------------------------------------
 
 @dp.message(F.text.lower() == "клан")
-async def clan_menu(message: Message, state: FSMContext):
+@dp.message(F.text == "🛡 Клан")
+async def clan_menu(message: Message):
     uid = message.from_user.id
     
     async with aiosqlite.connect(DB_PATH) as db:
-        # Узнаем, в клане ли игрок
+        # Получаем clan_id пользователя
         async with db.execute("SELECT clan_id FROM users WHERE id = ?", (uid,)) as cur:
-            user_data = await cur.fetchone()
-            
-        clan_id = user_data[0] if user_data else None
-        
+            user_row = await cur.fetchone()
+            clan_id = user_row[0] if user_row else None
+
         if not clan_id:
             text = (
                 "🛡 <b>Кланы</b>\n\n"
                 "Ты пока не состоишь в клане.\n\n"
-                "🔹 Чтобы создать свой клан (цена: 20 000), напиши: <code>создать клан</code>\n"
-                "🔹 Чтобы вступить в существующий, напиши: <code>вступить [Имя Клана]</code>"
+                "🔹 Чтобы создать свой клан (20 000), напиши: <code>создать клан</code>\n"
+                "🔹 Чтобы вступить: <code>вступить [Имя]</code>"
             )
             return await message.answer(text, parse_mode="HTML")
-            
-        # Если в клане, достаем инфу
-        async with db.execute("SELECT name, owner_id, balance FROM clans WHERE id = ?", (clan_id,)) as cur:
+
+        # Получаем данные клана и имя лидера через JOIN
+        query = """
+            SELECT clans.name, clans.owner_id, clans.balance, users.name 
+            FROM clans 
+            JOIN users ON clans.owner_id = users.id 
+            WHERE clans.id = ?
+        """
+        async with db.execute(query, (clan_id,)) as cur:
             clan_data = await cur.fetchone()
-            
+
         if not clan_data:
-            # Если произошел баг и клан удален
-            await db.execute("UPDATE users SET clan_id = NULL WHERE id = ?", (uid,))
-            await db.commit()
-            return await message.answer(" Твой клан был распущен.")
-            
-        c_name, c_owner, c_bal = clan_data
-        
+            return await message.answer("❌ Ошибка: Клан не найден.")
+
+        c_name, c_owner_id, c_bal, owner_name = clan_data
+
         # Считаем участников
         async with db.execute("SELECT COUNT(id) FROM users WHERE clan_id = ?", (clan_id,)) as cur:
             members_count = (await cur.fetchone())[0]
-            
-        role = "👑 Лидер" if uid == c_owner else "👤 Участник"
-        
+
+        # Определяем роль
+        role = "Лидер" if uid == c_owner_id else "Участник"
+        role_icon = "👑" if uid == c_owner_id else "👤"
+
+        # Формируем текст по твоему образцу
         text = (
             f"🛡 <b>Клан: {c_name}</b>\n"
-            f"Твоя роль: {role}\n"
-            f"👥 Участников: {members_count}\n"
-            f"💰 Казна: {fmt(c_bal)} Угадаек\n\n"
-            f"<i>Пополнить казну: <code>в казну [сумма]</code>\n"
+            f"👑 <b>Лидер:</b> {owner_name}\n"
+            f"👤 <b>Заместитель:</b> —\n"  # Пока прочерк
+            f"💰 <b>Казна:</b> {fmt(c_bal)} Угадаек\n"
+            f"👥 <b>Количество членов:</b> {members_count}\n\n"
+            f"<b>Твоя роль:</b> {role_icon} {role}\n"
+            "----------------------------\n"
+            f"<i>• Пополнить: <code>в казну [сумма]</code>\n"
         )
-        if uid == c_owner:
-            text += "Снять из казны: <code>из казны [сумма]</code>\n"
-        text += "Покинуть клан: <code>покинуть клан</code></i>"
+        
+        if uid == c_owner_id:
+            text += f"• Снять: <code>из казны [сумма]</code>\n"
+        
+        text += "• Выйти: <code>покинуть клан</code></i>"
+
         await message.answer(text, parse_mode="HTML")
 
 # --- СОЗДАНИЕ КЛАНА ---
