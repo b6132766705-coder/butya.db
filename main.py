@@ -94,14 +94,14 @@ class ClanStates(StatesGroup):
 # --- КЛАВИАТУРЫ ---
 def get_main_kb(chat_type):
     if chat_type == 'private':
-        # --- МЕНЮ ДЛЯ ЛИЧНЫХ СООБЩЕНИЙ ---
+        # Кнопки для лички (добавил Клан)
         buttons = [
             [KeyboardButton(text="🎮 Играть"), KeyboardButton(text="👤 Профиль")],
-            [KeyboardButton(text="🏆 Рейтинг"), KeyboardButton(text="🎒 Инвентарь")],
-            [KeyboardButton(text="🎁 Бонус")]
+            [KeyboardButton(text="🏆 Рейтинг"), KeyboardButton(text="🛡 Клан")], # Вот она
+            [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🎒 Инвентарь")]
         ]
     else:
-        # --- МЕНЮ ДЛЯ ГРУПП (ЧАТОВ) ---
+        # Кнопки для групп
         buttons = [
             [KeyboardButton(text="🎮 Играть"), KeyboardButton(text="👤 Профиль")],
             [KeyboardButton(text="📊 Ставки"), KeyboardButton(text="🚫 Отмена")]
