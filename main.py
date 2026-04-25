@@ -399,8 +399,9 @@ async def process_guess(message: Message, state: FSMContext):
     else:
         await message.answer(f"Попытки кончились! Это было {target}.", reply_markup=get_main_kb(message.chat.type))
         await state.clear()
-
-# --- КЛАНЫ ---
+#-------------------------------------------------------------------------
+# ------------------------------- КЛАНЫ ----------------------------------
+#-------------------------------------------------------------------------
 
 @dp.message(F.text.lower() == "клан")
 async def clan_menu(message: Message, state: FSMContext):
