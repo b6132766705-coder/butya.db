@@ -403,27 +403,28 @@ async def process_guess(message: Message, state: FSMContext):
 # ------------------------------- КЛАНЫ ----------------------------------
 #-------------------------------------------------------------------------
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 @dp.message(F.text.lower() == "клан")
 @dp.message(F.text == "🛡 Клан")
 async def clan_menu(message: Message):
     uid = message.from_user.id
     
     async with aiosqlite.connect(DB_PATH) as db:
-        # Получаем clan_id пользователя
+        # 1. Ищем клан пользователя
         async with db.execute("SELECT clan_id FROM users WHERE id = ?", (uid,)) as cur:
             user_row = await cur.fetchone()
             clan_id = user_row[0] if user_row else None
 
         if not clan_id:
-            text = (
-                "🛡 <b>Кланы</b>\n\n"
-                "Ты пока не состоишь в клане.\n\n"
-                "🔹 Чтобы создать свой клан (20 000), напиши: <code>создать клан</code>\n"
-                "🔹 Чтобы вступить: <code>вступить [Имя]</code>"
-            )
-            return await message.answer(text, parse_mode="HTML")
+            # Если нет клана — предлагаем создать или вступить
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✨ Создать клан (20к)", callback_data="clan_create_flow")],
+                [InlineKeyboardButton(text="🏆 Топ кланов", callback_data="clan_top")]
+            ])
+            return await message.answer("🛡 <b>Кланы</b>\n\nВы пока не состоите в клане. Объединяйтесь с друзьями, чтобы захватить лидерство!", reply_markup=kb, parse_mode="HTML")
 
-        # Получаем данные клана и имя лидера через JOIN
+        # 2. Получаем данные клана
         query = """
             SELECT clans.name, clans.owner_id, clans.balance, users.name 
             FROM clans 
@@ -432,38 +433,42 @@ async def clan_menu(message: Message):
         """
         async with db.execute(query, (clan_id,)) as cur:
             clan_data = await cur.fetchone()
-
-        if not clan_data:
-            return await message.answer("❌ Ошибка: Клан не найден.")
-
+        
         c_name, c_owner_id, c_bal, owner_name = clan_data
 
-        # Считаем участников
         async with db.execute("SELECT COUNT(id) FROM users WHERE clan_id = ?", (clan_id,)) as cur:
             members_count = (await cur.fetchone())[0]
 
-        # Определяем роль
-        role = "Лидер" if uid == c_owner_id else "Участник"
-        role_icon = "👑" if uid == c_owner_id else "👤"
+        # 3. Формируем кнопки
+        buttons = [
+            [InlineKeyboardButton(text="💰 Пополнить казну", callback_data="clan_deposit")],
+            [InlineKeyboardButton(text="👥 Список участников", callback_data="clan_members")]
+        ]
 
-        # Формируем текст по твоему образцу
+        if uid == c_owner_id:
+            # Кнопки только для лидера
+            buttons.append([InlineKeyboardButton(text="⚙️ Управление кланом", callback_data="clan_admin")])
+            buttons.append([InlineKeyboardButton(text="💎 Магазин улучшений", callback_data="clan_upgrades")])
+        else:
+            # Кнопка для выхода обычного участника
+            buttons.append([InlineKeyboardButton(text="🚪 Покинуть клан", callback_data="clan_leave_confirm")])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        # 4. Текст сообщения
+        role_icon = "👑" if uid == c_owner_id else "👤"
+        role_name = "Лидер" if uid == c_owner_id else "Участник"
+
         text = (
             f"🛡 <b>Клан: {c_name}</b>\n"
             f"👑 <b>Лидер:</b> {owner_name}\n"
-            f"👤 <b>Заместитель:</b> —\n"  # Пока прочерк
+            f"👤 <b>Заместитель:</b> —\n"
             f"💰 <b>Казна:</b> {fmt(c_bal)} Угадаек\n"
-            f"👥 <b>Количество членов:</b> {members_count}\n\n"
-            f"<b>Твоя роль:</b> {role_icon} {role}\n"
-            "----------------------------\n"
-            f"<i>• Пополнить: <code>в казну [сумма]</code>\n"
+            f"👥 <b>Количество членов:</b> {members_count}/10\n\n"
+            f"<b>Твоя роль:</b> {role_icon} {role_name}"
         )
-        
-        if uid == c_owner_id:
-            text += f"• Снять: <code>из казны [сумма]</code>\n"
-        
-        text += "• Выйти: <code>покинуть клан</code></i>"
 
-        await message.answer(text, parse_mode="HTML")
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # --- СОЗДАНИЕ КЛАНА ---
 @dp.message(F.text.lower() == "создать клан")
