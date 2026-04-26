@@ -753,6 +753,7 @@ async def clan_members_list(callback: CallbackQuery):
 
 
 #----------------------------Магазин улучшений (Logic)-----------------------
+#----------------------------Магазин улучшений (Logic)-----------------------
 @dp.callback_query(F.data == "clan_upgrades")
 async def clan_upgrades_menu(callback: CallbackQuery):
     uid = callback.from_user.id
@@ -764,19 +765,20 @@ async def clan_upgrades_menu(callback: CallbackQuery):
             return await callback.answer("❌ Только лидер может заходить в магазин!", show_alert=True)
         
         cid, balance, mult, lvl, owner = clan
-        upgrade_cost = lvl * 50000 # Цена растет с уровнем
-
+        upgrade_cost = lvl * 50000 # Цена растет с каждым уровнем
+        
         text = (
             f"🛒 <b>Магазин улучшений</b>\n\n"
             f"Текущий уровень: <b>{lvl}</b>\n"
-            f"Множитель выигрыша: <b>x{mult}</b>\n\n"
+            f"Множитель выигрыша: <b>x{round(mult, 1)}</b>\n\n"
             f"🔹 <b>Улучшение: Удачливый клан</b>\n"
             f"Дает +0.1 к каждому выигрышу в рулетке всем участникам.\n"
-            f"💰 Стоимость: <b>{fmt(upgrade_cost)}</b> из казны."
+            f"💰 Стоимость: <b>{fmt(upgrade_cost)}</b> из казны.\n"
+            f"🏦 В казне: <b>{fmt(balance)}</b>"
         )
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✅ Купить (Ур. {lvl+1})", callback_data=f"buy_upgrade_luck")],
+            [InlineKeyboardButton(text=f"✅ Купить (Ур. {lvl+1})", callback_data="buy_upgrade_luck")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="clan_main")]
         ])
         
@@ -789,6 +791,9 @@ async def buy_upgrade(callback: CallbackQuery):
         async with db.execute("SELECT id, balance, level FROM clans WHERE owner_id = ?", (uid,)) as cur:
             clan = await cur.fetchone()
         
+        if not clan:
+            return await callback.answer("❌ Ошибка!", show_alert=True)
+
         cid, balance, lvl = clan
         cost = lvl * 50000
         
@@ -800,7 +805,61 @@ async def buy_upgrade(callback: CallbackQuery):
         await db.commit()
         
         await callback.answer("🎉 Улучшение куплено! Весь клан стал удачливее.", show_alert=True)
-        await clan_upgrades_menu(callback) # Обновляем меню
+        # Перерисовываем меню магазина с новыми данными
+        await clan_upgrades_menu(callback) 
+
+#----------------------------Управление участниками-----------------------
+@dp.callback_query(F.data.startswith("kick_"))
+async def kick_member(callback: CallbackQuery):
+    target_id = int(callback.data.split("_")[1])
+    leader_id = callback.from_user.id
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем, что нажимает действительно лидер этого клана
+        async with db.execute("SELECT id FROM clans WHERE owner_id = ?", (leader_id,)) as cur:
+            clan = await cur.fetchone()
+        
+        if not clan:
+            return await callback.answer("❌ У вас нет прав!", show_alert=True)
+
+        # Выгоняем игрока
+        await db.execute("UPDATE users SET clan_id = NULL WHERE id = ? AND clan_id = ?", (target_id, clan[0]))
+        await db.commit()
+
+    await callback.answer("Участник изгнан из клана!", show_alert=True)
+    await clan_members_list(callback) # Обновляем список
+
+@dp.callback_query(F.data.startswith("transfer_"))
+async def transfer_leader(callback: CallbackQuery):
+    target_id = int(callback.data.split("_")[1])
+    leader_id = callback.from_user.id
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id FROM clans WHERE owner_id = ?", (leader_id,)) as cur:
+            clan = await cur.fetchone()
+        
+        if not clan:
+            return await callback.answer("❌ У вас нет прав!", show_alert=True)
+
+        # Меняем владельца клана
+        await db.execute("UPDATE clans SET owner_id = ? WHERE id = ?", (target_id, clan[0]))
+        await db.commit()
+
+    await callback.answer("👑 Лидерство успешно передано!", show_alert=True)
+    # Удаляем сообщение со списком, так как мы больше не лидер
+    await callback.message.delete()
+    await callback.message.answer("Вы передали права лидера другому участнику.")
+
+#----------------------------Кнопка "Назад" в главное меню клана----------
+@dp.callback_query(F.data == "clan_main")
+async def back_to_clan_main(callback: CallbackQuery):
+    # Самый простой способ вернуть главное меню клана — удалить текущее сообщение
+    # и вызвать функцию clan_menu, подменив message
+    await callback.message.delete()
+    # Создаем фейковый Message, чтобы передать его в твою функцию clan_menu
+    fake_message = callback.message
+    fake_message.from_user = callback.from_user 
+    await clan_menu(fake_message)
 
 # --- РУЛЕТКА ---
 def is_valid_bet_format(m: Message):
