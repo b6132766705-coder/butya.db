@@ -448,9 +448,11 @@ async def clan_menu(message: Message):
             members_count = (await cur.fetchone())[0]
 
         # 3. Формируем кнопки
+   # Находим список кнопок в функции clan_menu и добавляем туда Топ
         buttons = [
             [InlineKeyboardButton(text="💰 Пополнить казну", callback_data="clan_deposit")],
-            [InlineKeyboardButton(text="👥 Список участников", callback_data="clan_members")]
+            [InlineKeyboardButton(text="👥 Список участников", callback_data="clan_members")],
+            [InlineKeyboardButton(text="🏆 Топ кланов", callback_data="clan_top")] # Добавили сюда
         ]
 
         if uid == c_owner_id:
@@ -759,6 +761,24 @@ async def clan_members_list(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
+
+# Команда для просмотра топа кланов текстом
+@dp.message(F.text.lower() == "топ кланов")
+async def show_clan_top_text(message: Message):
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Берем топ-5 самых богатых кланов
+        query = "SELECT name, balance FROM clans ORDER BY balance DESC LIMIT 5"
+        async with db.execute(query) as cur:
+            top_clans = await cur.fetchall()
+    
+    if not top_clans:
+        return await message.answer("🛡 Кланы ещё не созданы. Будь первым!")
+
+    text = "🏆 <b>ТОП-5 БОГАТЕЙШИХ КЛАНОВ</b>\n\n"
+    for i, (name, bal) in enumerate(top_clans, 1):
+        text += f"{i}. 🛡 <b>{name}</b> — {fmt(bal)} Угадаек\n"
+    
+    await message.answer(text, parse_mode="HTML")
 
 #----------------------------Магазин улучшений (Logic)-----------------------
 #----------------------------Магазин улучшений (Logic)-----------------------
