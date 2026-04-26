@@ -53,7 +53,11 @@ async def init_db():
                            (user_id INTEGER, item_name TEXT, amount INTEGER DEFAULT 1,
                             PRIMARY KEY (user_id, item_name))''')
         
+        await db.execute("ALTER TABLE clans ADD COLUMN multiplier REAL DEFAULT 1.0")
+        await db.execute("ALTER TABLE clans ADD COLUMN level INTEGER DEFAULT 1")
         await db.commit()
+    except:
+        pass # Если колонки уже есть, просто идем дальше
 
 
 async def get_user(user_id, name):
@@ -700,7 +704,104 @@ async def leave_clan(message: Message):
         
     await message.answer("🚪 Ты покинул клан.")
 
+@dp.callback_query(F.data == "clan_top")
+async def show_clan_top(callback: CallbackQuery):
+    async with aiosqlite.connect(DB_PATH) as db:
+        query = "SELECT name, balance FROM clans ORDER BY balance DESC LIMIT 5"
+        async with db.execute(query) as cur:
+            top_clans = await cur.fetchall()
+    
+    text = "🏆 <b>ТОП-5 БОГАТЕЙШИХ КЛАНОВ</b>\n\n"
+    for i, (name, bal) in enumerate(top_clans, 1):
+        text += f"{i}. 🛡 <b>{name}</b> — {fmt(bal)} Угадаек\n"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="clan_main")]])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
+@dp.callback_query(F.data == "clan_members")
+async def clan_members_list(callback: CallbackQuery):
+    uid = callback.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Получаем clan_id игрока
+        async with db.execute("SELECT clan_id FROM users WHERE id = ?", (uid,)) as cur:
+            cid = (await cur.fetchone())[0]
+        
+        # Получаем список всех членов клана
+        async with db.execute("SELECT id, name FROM users WHERE clan_id = ?", (cid,)) as cur:
+            members = await cur.fetchall()
+            
+        # Узнаем, кто лидер
+        async with db.execute("SELECT owner_id FROM clans WHERE id = ?", (cid,)) as cur:
+            owner_id = (await cur.fetchone())[0]
+
+    text = "👥 <b>Участники клана:</b>\n\n"
+    buttons = []
+    
+    for m_id, m_name in members:
+        role = "👑" if m_id == owner_id else "👤"
+        text += f"{role} {m_name} (ID: {m_id})\n"
+        
+        # Если смотрит лидер, добавляем кнопки управления для каждого (кроме него самого)
+        if uid == owner_id and m_id != owner_id:
+            buttons.append([
+                InlineKeyboardButton(text=f"❌ Выгнать {m_name}", callback_data=f"kick_{m_id}"),
+                InlineKeyboardButton(text=f"👑 Передать", callback_data=f"transfer_{m_id}")
+            ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="clan_main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+#----------------------------Магазин улучшений (Logic)-----------------------
+@dp.callback_query(F.data == "clan_upgrades")
+async def clan_upgrades_menu(callback: CallbackQuery):
+    uid = callback.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id, balance, multiplier, level, owner_id FROM clans WHERE owner_id = ?", (uid,)) as cur:
+            clan = await cur.fetchone()
+        
+        if not clan:
+            return await callback.answer("❌ Только лидер может заходить в магазин!", show_alert=True)
+        
+        cid, balance, mult, lvl, owner = clan
+        upgrade_cost = lvl * 50000 # Цена растет с уровнем
+
+        text = (
+            f"🛒 <b>Магазин улучшений</b>\n\n"
+            f"Текущий уровень: <b>{lvl}</b>\n"
+            f"Множитель выигрыша: <b>x{mult}</b>\n\n"
+            f"🔹 <b>Улучшение: Удачливый клан</b>\n"
+            f"Дает +0.1 к каждому выигрышу в рулетке всем участникам.\n"
+            f"💰 Стоимость: <b>{fmt(upgrade_cost)}</b> из казны."
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"✅ Купить (Ур. {lvl+1})", callback_data=f"buy_upgrade_luck")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="clan_main")]
+        ])
+        
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "buy_upgrade_luck")
+async def buy_upgrade(callback: CallbackQuery):
+    uid = callback.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id, balance, level FROM clans WHERE owner_id = ?", (uid,)) as cur:
+            clan = await cur.fetchone()
+        
+        cid, balance, lvl = clan
+        cost = lvl * 50000
+        
+        if balance < cost:
+            return await callback.answer("❌ В казне недостаточно средств!", show_alert=True)
+        
+        # Списываем деньги и повышаем уровень/множитель
+        await db.execute("UPDATE clans SET balance = balance - ?, level = level + 1, multiplier = multiplier + 0.1 WHERE id = ?", (cost, cid))
+        await db.commit()
+        
+        await callback.answer("🎉 Улучшение куплено! Весь клан стал удачливее.", show_alert=True)
+        await clan_upgrades_menu(callback) # Обновляем меню
 
 # --- РУЛЕТКА ---
 def is_valid_bet_format(m: Message):
@@ -807,87 +908,89 @@ async def spin(message: Message):
 
     # 1. Крутим колесо
     res_num = random.randint(0, 36)
-
-    # СОХРАНЯЕМ В ИСТОРИЮ
-    # Сохраняем номер в историю (добавь это в конец функции spin)
+    
+    # Открываем соединение с БД для записи истории и проверки кланов
     async with aiosqlite.connect(DB_PATH) as db:
+        # Сохраняем в историю
         await db.execute("INSERT INTO history (number) VALUES (?)", (res_num,))
         await db.commit()
-    # Определяем цвет для заголовка
-    red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
-    if res_num == 0:
-        header_color = "🟢 ЗЕРО"
-        res_color_key = "зеро"
-    elif res_num in red_numbers:
-        header_color = "🔴 КРАСНОЕ"
-        res_color_key = "к"
-    else:
-        header_color = "⚫ ЧЁРНОЕ"
-        res_color_key = "ч"
 
-    # Заголовок сообщения
-    header_text = f"🎰 {header_color} {res_num}\n\n"
-    user_reports = []
+        # Определяем цвет для заголовка
+        red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+        if res_num == 0:
+            header_color = "🟢 ЗЕРО"
+            res_color_key = "зеро"
+        elif res_num in red_numbers:
+            header_color = "🔴 КРАСНОЕ"
+            res_color_key = "к"
+        else:
+            header_color = "⚫ ЧЁРНОЕ"
+            res_color_key = "ч"
 
-    # 2. Обрабатываем ставки каждого игрока
-    for bet in pending_bets[cid]:
-        uid = bet['user_id']
-        name = bet['name']
-        amount = bet['amount']
-        targets = bet['targets']
-        
-        total_won = 0
-        target_lines = []
-        
-        for t in targets:
-            is_win = False
-            mult = 0
+        header_text = f"🎰 {header_color} {res_num}\n\n"
+        user_reports = []
+
+        # 2. Обрабатываем ставки каждого игрока
+        for bet in pending_bets[cid]:
+            uid = bet['user_id']
+            name = bet['name']
+            amount = bet['amount']
+            targets = bet['targets']
             
-            # Проверка условий победы
-            if t.isdigit() and int(t) == res_num:
-                is_win, mult = True, 36
-            elif t in ["к", "кр", "красное"] and res_color_key == "к":
-                is_win, mult = True, 2
-            elif t in ["ч", "чр", "черное"] and res_color_key == "ч":
-                is_win, mult = True, 2
-            elif t == "чет" and res_num != 0 and res_num % 2 == 0:
-                is_win, mult = True, 2
-            elif t == "нечет" and res_num % 2 != 0:
-                is_win, mult = True, 2
-            # Диапазоны (например 1-18)
-            elif "-" in t:
-                low, high = map(int, t.split("-"))
-                if low <= res_num <= high:
-                    is_win, mult = True, 2 # Или другой множитель по вкусу
+            # --- НОВАЯ ЛОГИКА: Получаем клановый множитель игрока ---
+            query = "SELECT multiplier FROM clans WHERE id = (SELECT clan_id FROM users WHERE id = ?)"
+            async with db.execute(query, (uid,)) as cur:
+                row = await cur.fetchone()
+                clan_mult = row[0] if row else 1.0 # Если нет клана, множитель 1.0
+            
+            total_won = 0
+            target_lines = []
+            
+            for t in targets:
+                is_win = False
+                mult = 0
+                
+                if t.isdigit() and int(t) == res_num:
+                    is_win, mult = True, 36
+                elif t in ["к", "кр", "красное"] and res_color_key == "к":
+                    is_win, mult = True, 2
+                elif t in ["ч", "чр", "черное"] and res_color_key == "ч":
+                    is_win, mult = True, 2
+                elif t == "чет" and res_num != 0 and res_num % 2 == 0:
+                    is_win, mult = True, 2
+                elif t == "нечет" and res_num % 2 != 0:
+                    is_win, mult = True, 2
+                elif "-" in t:
+                    low, high = map(int, t.split("-"))
+                    if low <= res_num <= high:
+                        is_win, mult = True, 2
 
-            if is_win:
-                current_win = amount * mult
-                total_won += current_win
-                target_lines.append(f"✅ {fmt(amount)} ➔ {t}")
-            else:
-                target_lines.append(f"❌ {fmt(amount)} ➔ {t}")
+                if is_win:
+                    # ПРИМЕНЯЕМ КЛАНОВЫЙ МНОЖИТЕЛЬ
+                    current_win = int(amount * mult * clan_mult) 
+                    total_won += current_win
+                    target_lines.append(f"✅ {fmt(amount)} ➔ {t}")
+                else:
+                    target_lines.append(f"❌ {fmt(amount)} ➔ {t}")
 
-        # Рассчитываем чистый итог
-        total_spent = amount * len(targets)
-        profit_loss = total_won - total_spent
-        
-        # Добавляем выигрыш на баланс (если он есть)
-        if total_won > 0:
-            await update_balance(uid, total_won)
+            # Рассчитываем чистый итог (сколько выиграл минус сколько поставил)
+            total_spent = amount * len(targets)
+            profit_loss = total_won - total_spent
+            
+            if total_won > 0:
+                await update_balance(uid, total_won)
 
-        # Формируем блок игрока
-        user_block = f"👤 {name}:\n" + "\n".join(target_lines)
-        
-        # Красиво оформляем строку итога
-        sign = "+" if profit_loss > 0 else ""
-        user_block += f"\n💰 Итог: {sign}{fmt(profit_loss)}"
-        
-        user_reports.append(user_block)
+            user_block = f"👤 {name}:\n" + "\n".join(target_lines)
+            
+            # Если множитель больше 1, добавляем пометку о бонусе
+            sign = "+" if profit_loss > 0 else ""
+            bonus_text = f" (x{clan_mult} 💎)" if clan_mult > 1.0 else ""
+            user_block += f"\n💰 Итог: {sign}{fmt(profit_loss)}{bonus_text}"
+            
+            user_reports.append(user_block)
 
     # 3. Собираем всё сообщение и отправляем
     final_text = header_text + "\n\n".join(user_reports)
-    
-    # Очищаем ставки для этого чата
     pending_bets[cid] = []
     
     await message.answer(final_text, parse_mode="HTML")
