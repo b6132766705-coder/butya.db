@@ -53,9 +53,14 @@ async def init_db():
                            (user_id INTEGER, item_name TEXT, amount INTEGER DEFAULT 1,
                             PRIMARY KEY (user_id, item_name))''')
         
-        await db.execute("ALTER TABLE clans ADD COLUMN multiplier REAL DEFAULT 1.0")
-        await db.execute("ALTER TABLE clans ADD COLUMN level INTEGER DEFAULT 1")
-        await db.commit()
+        # Пытаемся добавить новые колонки
+        try:
+            await db.execute("ALTER TABLE clans ADD COLUMN multiplier REAL DEFAULT 1.0")
+            await db.execute("ALTER TABLE clans ADD COLUMN level INTEGER DEFAULT 1")
+            await db.commit()
+        except Exception:
+            # Если колонки уже существуют, просто пропускаем этот шаг
+            pass
 
 
 
