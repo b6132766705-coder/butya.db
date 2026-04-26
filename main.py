@@ -56,8 +56,7 @@ async def init_db():
         await db.execute("ALTER TABLE clans ADD COLUMN multiplier REAL DEFAULT 1.0")
         await db.execute("ALTER TABLE clans ADD COLUMN level INTEGER DEFAULT 1")
         await db.commit()
-    except:
-        pass # Если колонки уже есть, просто идем дальше
+
 
 
 async def get_user(user_id, name):
