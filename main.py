@@ -619,30 +619,33 @@ async def decline_member(callback: CallbackQuery):
     except: pass
 
 # --- ПОПОЛНЕНИЕ КАЗНЫ И ВЫХОД ---
-@dp.message(F.text.lower().startswith("в казну "))
+@dp.message(F.text.lower().regexp(r"^(в|во)\s+(казну|козну)\s+(\d+)"))
 async def donate_to_clan(message: Message):
-    try:
-        amount = int(message.text.split()[2])
-        if amount <= 0: return
-    except:
-        return
+    # Извлекаем сумму из текста с помощью регулярного выражения
+    import re
+    match = re.search(r"(\d+)", message.text)
+    if not match: return
+    
+    amount = int(match.group(1))
+    if amount <= 0: return
         
     uid = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT balance, clan_id FROM users WHERE id = ?", (uid,)) as cur:
             user_data = await cur.fetchone()
             
-        if not user_data[1]:
+        if not user_data or not user_data[1]:
             return await message.answer("❌ Ты не состоишь в клане!")
+        
         if user_data[0] < amount:
-            return await message.answer("❌ Недостаточно Угадаек на балансе.")
+            return await message.answer("❌ У тебя не хватает Угадаек!")
             
         # Переводим деньги
         await db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, uid))
         await db.execute("UPDATE clans SET balance = balance + ? WHERE id = ?", (amount, user_data[1]))
         await db.commit()
         
-    await message.answer(f"💰 Ты пожертвовал <b>{fmt(amount)}</b> Угадаек в казну клана!", parse_mode="HTML")
+    await message.answer(f"💰 Ты успешно внес <b>{fmt(amount)}</b> Угадаек в казну клана!", parse_mode="HTML")
 
 @dp.message(F.text.lower().startswith("из казны "))
 async def withdraw_from_clan(message: Message):
@@ -812,6 +815,32 @@ async def buy_upgrade(callback: CallbackQuery):
         await callback.answer("🎉 Улучшение куплено! Весь клан стал удачливее.", show_alert=True)
         # Перерисовываем меню магазина с новыми данными
         await clan_upgrades_menu(callback) 
+
+# Обработка кнопки "Пополнить казну"
+@dp.callback_query(F.data == "clan_deposit")
+async def clan_deposit_callback(callback: CallbackQuery):
+    # Просто даем инструкцию, так как пополнение идет через текст
+    await callback.answer("💰 Чтобы пополнить казну, напиши в чат: в казну [сумма]", show_alert=True)
+
+# Обработка кнопки "Управление кланом"
+@dp.callback_query(F.data == "clan_admin")
+async def clan_admin_callback(callback: CallbackQuery):
+    uid = callback.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT owner_id, name FROM clans WHERE owner_id = ?", (uid,)) as cur:
+            clan = await cur.fetchone()
+            
+    if not clan:
+        return await callback.answer("❌ Управлять кланом может только лидер!", show_alert=True)
+    
+    text = f"⚙️ <b>Панель управления кланом «{clan[1]}»</b>\n\nЗдесь ты можешь исключать участников или улучшать клан в магазине."
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Участники (Кик/Лидерка)", callback_data="clan_members")],
+        [InlineKeyboardButton(text="💎 Магазин улучшений", callback_data="clan_upgrades")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="clan_main")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 #----------------------------Управление участниками-----------------------
 @dp.callback_query(F.data.startswith("kick_"))
